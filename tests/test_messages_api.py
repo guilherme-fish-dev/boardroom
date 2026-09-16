@@ -103,3 +103,28 @@ def test_list_messages_since_id_returns_only_newer(db):
     resp = client.get(f"/api/groups/{group['id']}/messages", params={"since_id": first["id"]})
     contents = [m["content"] for m in resp.json()]
     assert contents == ["segunda"]
+
+
+def test_upload_image_creates_message_and_priority_job(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent = _setup_group_with_agent(client)
+
+    files = {"image": ("cat.png", b"fake-png-bytes", "image/png")}
+    resp = client.post(
+        f"/api/groups/{group['id']}/messages/image",
+        data={"content": "olha essa foto"},
+        files=files,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["image_path"] is not None
+
+    conn = get_connection()
+    try:
+        jobs = conn.execute("SELECT * FROM queue_jobs").fetchall()
+    finally:
+        conn.close()
+    assert len(jobs) == 1
+    assert jobs[0]["job_type"] == "describe_image"
+    assert jobs[0]["priority"] == 0

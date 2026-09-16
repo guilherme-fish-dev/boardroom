@@ -1,7 +1,10 @@
 import json
+import os
 import sqlite3
+import uuid
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.db import get_connection
@@ -96,6 +99,46 @@ def post_message(group_id: int, message: MessageIn) -> MessageOut:
         )
         message_id = cur.lastrowid
         enqueue_mentions(conn, group_id, message_id, message.content)
+        conn.commit()
+        row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+    finally:
+        conn.close()
+    return _row_to_message(row)
+
+
+def _upload_dir() -> Path:
+    path = Path(os.environ.get("BOARDROOM_UPLOAD_DIR", "./data/uploads"))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@router.post("/image", response_model=MessageOut, status_code=201)
+async def post_image_message(
+    group_id: int, content: str = Form(""), image: UploadFile = File(...)
+) -> MessageOut:
+    conn = get_connection()
+    try:
+        group = conn.execute("SELECT id FROM groups WHERE id = ?", (group_id,)).fetchone()
+        if group is None:
+            raise HTTPException(status_code=404, detail="group not found")
+
+        suffix = Path(image.filename or "upload.png").suffix or ".png"
+        dest = _upload_dir() / f"{uuid.uuid4().hex}{suffix}"
+        dest.write_bytes(await image.read())
+
+        cur = conn.execute(
+            "INSERT INTO messages (group_id, sender_type, sender_id, content, image_path) "
+            "VALUES (?, 'user', NULL, ?, ?)",
+            (group_id, content, str(dest)),
+        )
+        message_id = cur.lastrowid
+
+        conn.execute(
+            "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+            "VALUES (?, NULL, 'describe_image', 0, ?)",
+            (group_id, json.dumps({"image_path": str(dest), "message_id": message_id})),
+        )
+        enqueue_mentions(conn, group_id, message_id, content)
         conn.commit()
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     finally:
