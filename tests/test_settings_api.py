@@ -30,3 +30,16 @@ def test_update_settings(db):
     assert resp.status_code == 200
     resp = client.get("/api/settings")
     assert resp.json()["default_vision_model"] == "qwen2-vl-7b"
+
+
+def test_update_settings_rejects_invalid_max_pending(db):
+    client = make_client(db)
+    resp = client.put(
+        "/api/settings",
+        json={
+            "llama_swap_base_url": "http://localhost:8080",
+            "default_vision_model": "",
+            "max_pending_per_group": "banana",
+        },
+    )
+    assert resp.status_code == 422

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.db import get_connection
 
@@ -10,6 +10,13 @@ class Settings(BaseModel):
     llama_swap_base_url: str
     default_vision_model: str
     max_pending_per_group: str
+
+    @field_validator("max_pending_per_group")
+    @classmethod
+    def _validate_positive_int(cls, v: str) -> str:
+        if not v.isdigit() or int(v) <= 0:
+            raise ValueError("max_pending_per_group must be a positive integer")
+        return v
 
 
 @router.get("", response_model=Settings)
