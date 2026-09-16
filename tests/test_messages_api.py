@@ -128,3 +128,32 @@ def test_upload_image_creates_message_and_priority_job(db, tmp_path, monkeypatch
     assert len(jobs) == 1
     assert jobs[0]["job_type"] == "describe_image"
     assert jobs[0]["priority"] == 0
+
+
+def test_upload_image_rejects_non_image_content_type(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent = _setup_group_with_agent(client)
+
+    files = {"image": ("notes.txt", b"just text", "text/plain")}
+    resp = client.post(
+        f"/api/groups/{group['id']}/messages/image",
+        data={"content": "isso não é imagem"},
+        files=files,
+    )
+    assert resp.status_code == 415
+
+
+def test_upload_image_rejects_oversized_file(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent = _setup_group_with_agent(client)
+
+    big_payload = b"x" * (10 * 1024 * 1024 + 1)
+    files = {"image": ("big.png", big_payload, "image/png")}
+    resp = client.post(
+        f"/api/groups/{group['id']}/messages/image",
+        data={"content": "arquivo grande"},
+        files=files,
+    )
+    assert resp.status_code == 413

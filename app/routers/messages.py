@@ -106,6 +106,9 @@ def post_message(group_id: int, message: MessageIn) -> MessageOut:
     return _row_to_message(row)
 
 
+MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+
+
 def _upload_dir() -> Path:
     path = Path(os.environ.get("BOARDROOM_UPLOAD_DIR", "./data/uploads"))
     path.mkdir(parents=True, exist_ok=True)
@@ -116,6 +119,13 @@ def _upload_dir() -> Path:
 async def post_image_message(
     group_id: int, content: str = Form(""), image: UploadFile = File(...)
 ) -> MessageOut:
+    if not (image.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=415, detail="file must be an image")
+
+    body = await image.read()
+    if len(body) > MAX_IMAGE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="image too large (max 10MB)")
+
     conn = get_connection()
     try:
         group = conn.execute("SELECT id FROM groups WHERE id = ?", (group_id,)).fetchone()
@@ -124,7 +134,7 @@ async def post_image_message(
 
         suffix = Path(image.filename or "upload.png").suffix or ".png"
         dest = _upload_dir() / f"{uuid.uuid4().hex}{suffix}"
-        dest.write_bytes(await image.read())
+        dest.write_bytes(body)
 
         cur = conn.execute(
             "INSERT INTO messages (group_id, sender_type, sender_id, content, image_path) "
