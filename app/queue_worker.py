@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import sqlite3
 
 from app.db import get_connection
 from app.llm_client import chat_completion
 from app.mentions import extract_mentions
 from app.routers.messages import enqueue_mentions
+
+logger = logging.getLogger(__name__)
 
 
 def _get_setting(conn: sqlite3.Connection, key: str) -> str:
@@ -110,6 +113,8 @@ def process_next_job() -> bool:
                 _process_agent_turn(conn, job)
             conn.commit()
         except Exception as exc:  # noqa: BLE001 - surface any LLM/IO failure as an error job + system message
+            logger.exception(f"Erro ao processar job {job['id']}")
+            conn.rollback()  # discard any partial, uncommitted work (e.g. the agent reply insert) before recording the error
             conn.execute("UPDATE queue_jobs SET status = 'error' WHERE id = ?", (job["id"],))
             conn.execute(
                 "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'system', ?)",

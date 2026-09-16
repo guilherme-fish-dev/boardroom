@@ -126,6 +126,50 @@ def test_process_next_job_reply_with_new_mention_enqueues_follow_up(db, monkeypa
     assert jobs[0]["agent_id"] == alice_id
 
 
+def test_process_next_job_rolls_back_partial_work_on_error(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: "olá, tudo bem?")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.queue_worker.enqueue_mentions", _boom)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+        system_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'system'"
+        ).fetchall()
+        job = conn.execute("SELECT * FROM queue_jobs").fetchone()
+    finally:
+        conn.close()
+
+    assert agent_messages == []
+    assert job["status"] == "error"
+    assert len(system_messages) == 1
+    assert "boom" in system_messages[0]["content"]
+
+
 def test_process_next_job_no_pending_jobs_is_noop(db):
     assert process_next_job() is False
 
