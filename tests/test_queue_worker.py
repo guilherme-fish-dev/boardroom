@@ -170,6 +170,70 @@ def test_process_next_job_rolls_back_partial_work_on_error(db, monkeypatch):
     assert "boom" in system_messages[0]["content"]
 
 
+def test_process_next_job_agent_turn_passes_image_to_vision_capable_agent(db, monkeypatch, tmp_path):
+    image_path = tmp_path / "recent.png"
+    image_path.write_bytes(b"fake-image-bytes")
+
+    conn = get_connection()
+    agent_id = _create_agent(conn, vision_capable=1)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (group_id, str(image_path)),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "vejo uma imagem",
+    )
+
+    process_next_job()
+
+    assert len(calls) == 1
+    assert calls[0]["image_base64"] is not None
+
+
+def test_process_next_job_agent_turn_no_image_for_non_vision_agent(db, monkeypatch, tmp_path):
+    image_path = tmp_path / "recent.png"
+    image_path.write_bytes(b"fake-image-bytes")
+
+    conn = get_connection()
+    agent_id = _create_agent(conn, vision_capable=0)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (group_id, str(image_path)),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "texto apenas",
+    )
+
+    process_next_job()
+
+    assert len(calls) == 1
+    assert calls[0].get("image_base64") is None
+
+
 def test_process_next_job_no_pending_jobs_is_noop(db):
     assert process_next_job() is False
 

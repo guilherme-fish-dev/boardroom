@@ -60,12 +60,33 @@ def _process_describe_image(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
 
 
+def _find_recent_image(conn: sqlite3.Connection, group_id: int) -> str | None:
+    row = conn.execute(
+        "SELECT image_path FROM messages WHERE group_id = ? AND image_path IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1",
+        (group_id,),
+    ).fetchone()
+    return row["image_path"] if row else None
+
+
 def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     agent = conn.execute("SELECT * FROM agents WHERE id = ?", (job["agent_id"],)).fetchone()
     base_url = _get_setting(conn, "llama_swap_base_url")
     history = _build_history(conn, job["group_id"], agent["persona_prompt"])
 
-    reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
+    image_base64 = None
+    if agent["vision_capable"]:
+        image_path = _find_recent_image(conn, job["group_id"])
+        if image_path:
+            with open(image_path, "rb") as f:
+                image_base64 = base64.b64encode(f.read()).decode("ascii")
+
+    reply = chat_completion(
+        base_url=base_url,
+        model=agent["model_name"],
+        messages=history,
+        image_base64=image_base64,
+    )
 
     cur = conn.execute(
         "INSERT INTO messages (group_id, sender_type, sender_id, content) "
