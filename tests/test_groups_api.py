@@ -42,6 +42,14 @@ def test_add_and_list_members(db):
     assert [m["name"] for m in resp.json()] == ["bob"]
 
 
+def test_add_member_with_nonexistent_agent_returns_404(db):
+    client = make_client(db)
+    group = client.post("/api/groups", json={"name": "investidores"}).json()
+
+    resp = client.post(f"/api/groups/{group['id']}/members", json={"agent_id": 9999})
+    assert resp.status_code == 404
+
+
 def test_remove_member(db):
     client = make_client(db)
     agent = _create_agent(client)

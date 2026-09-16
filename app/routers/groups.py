@@ -70,10 +70,13 @@ def list_members(group_id: int) -> list[MemberOut]:
 def add_member(group_id: int, member: MemberIn) -> Response:
     conn = get_connection()
     try:
-        conn.execute(
-            "INSERT OR IGNORE INTO group_members (group_id, agent_id) VALUES (?, ?)",
-            (group_id, member.agent_id),
-        )
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO group_members (group_id, agent_id) VALUES (?, ?)",
+                (group_id, member.agent_id),
+            )
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=404, detail="group or agent not found")
         conn.commit()
     finally:
         conn.close()
