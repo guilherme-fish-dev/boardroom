@@ -6,3 +6,5 @@ venv/
 /data/uploads/
 .env
 node_modules/
+
+.worktrees/
