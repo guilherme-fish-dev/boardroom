@@ -2,6 +2,7 @@ const state = {
   groups: [],
   activeGroupId: null,
   agents: [],
+  members: [],
   lastMessageId: 0,
   pollTimer: null,
 };
@@ -43,7 +44,61 @@ async function selectGroup(groupId) {
   document.getElementById("channel-header").textContent = group ? `# ${group.name}` : "";
   showView("channel");
   await loadGroups();
+  await loadMembers(groupId);
   await pollMessages();
+}
+
+async function loadMembers(groupId) {
+  if (state.agents.length === 0) {
+    await loadAgents();
+  }
+  state.members = await api(`/api/groups/${groupId}/members`);
+  renderMembers(groupId);
+}
+
+function renderMembers(groupId) {
+  const list = document.getElementById("member-list");
+  list.innerHTML = "";
+  for (const member of state.members) {
+    const badge = document.createElement("span");
+    badge.className = "member-badge";
+    const name = document.createElement("span");
+    name.textContent = member.name;
+    badge.appendChild(name);
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.textContent = "×";
+    removeBtn.onclick = async () => {
+      await api(`/api/groups/${groupId}/members/${member.id}`, { method: "DELETE" });
+      await loadMembers(groupId);
+    };
+    badge.appendChild(removeBtn);
+    list.appendChild(badge);
+  }
+
+  const select = document.getElementById("add-member-select");
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "+ adicionar agente";
+  select.appendChild(placeholder);
+  const memberIds = new Set(state.members.map((m) => m.id));
+  for (const agent of state.agents) {
+    if (memberIds.has(agent.id)) continue;
+    const option = document.createElement("option");
+    option.value = agent.id;
+    option.textContent = agent.name;
+    select.appendChild(option);
+  }
+  select.value = "";
+  select.onchange = async () => {
+    if (!select.value) return;
+    await api(`/api/groups/${groupId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ agent_id: Number(select.value) }),
+    });
+    await loadMembers(groupId);
+  };
 }
 
 function renderMessage(message) {
