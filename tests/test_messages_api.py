@@ -157,3 +157,29 @@ def test_upload_image_rejects_oversized_file(db, tmp_path, monkeypatch):
         files=files,
     )
     assert resp.status_code == 413
+
+
+def test_get_message_image_returns_file_bytes(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent = _setup_group_with_agent(client)
+
+    files = {"image": ("cat.png", b"fake-png-bytes", "image/png")}
+    message = client.post(
+        f"/api/groups/{group['id']}/messages/image",
+        data={"content": "foto"},
+        files=files,
+    ).json()
+
+    resp = client.get(f"/api/groups/{group['id']}/messages/{message['id']}/image")
+    assert resp.status_code == 200
+    assert resp.content == b"fake-png-bytes"
+
+
+def test_get_message_image_404_when_no_image(db):
+    client = make_client(db)
+    group, agent = _setup_group_with_agent(client)
+    message = client.post(f"/api/groups/{group['id']}/messages", json={"content": "sem imagem"}).json()
+
+    resp = client.get(f"/api/groups/{group['id']}/messages/{message['id']}/image")
+    assert resp.status_code == 404

@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.db import get_connection
@@ -154,3 +155,18 @@ async def post_image_message(
     finally:
         conn.close()
     return _row_to_message(row)
+
+
+@router.get("/{message_id}/image")
+def get_message_image(group_id: int, message_id: int) -> FileResponse:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT image_path FROM messages WHERE id = ? AND group_id = ?",
+            (message_id, group_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row["image_path"] is None:
+        raise HTTPException(status_code=404, detail="image not found")
+    return FileResponse(row["image_path"])
