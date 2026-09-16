@@ -71,3 +71,17 @@ def test_chat_completion_raises_on_http_error():
             messages=[{"role": "user", "content": "oi"}],
             http_client=client,
         )
+
+
+def test_chat_completion_raises_value_error_on_malformed_response():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": []})
+
+    client = _client_with_transport(handler)
+    with pytest.raises(ValueError):
+        chat_completion(
+            base_url="http://localhost:8080",
+            model="qwen2.5-7b",
+            messages=[{"role": "user", "content": "oi"}],
+            http_client=client,
+        )

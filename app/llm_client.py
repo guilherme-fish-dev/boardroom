@@ -16,6 +16,13 @@ def chat_completion(
 
     If image_base64 is given, it is attached to the last message as a
     multimodal `image_url` content part alongside its existing text.
+
+    Raises:
+        httpx.ConnectError: llama-swap is unreachable.
+        httpx.TimeoutException: the request timed out.
+        httpx.HTTPStatusError: llama-swap responded with an HTTP error status.
+        ValueError: llama-swap responded with a 2xx status but an unexpected
+            or malformed JSON body (e.g. missing/empty `choices`).
     """
     payload_messages = [dict(m) for m in messages]
 
@@ -41,7 +48,10 @@ def chat_completion(
         response = client.post(f"{base_url}/v1/chat/completions", json=payload, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        try:
+            return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError) as exc:
+            raise ValueError(f"resposta inesperada do llama-swap: {data}") from exc
     finally:
         if owns_client:
             client.close()
