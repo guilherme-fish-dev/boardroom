@@ -1,0 +1,25 @@
+* { box-sizing: border-box; font-family: system-ui, sans-serif; }
+body { margin: 0; background: #1e1f22; color: #dcddde; }
+#app { display: flex; height: 100vh; }
+#sidebar { width: 220px; background: #2b2d31; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+#sidebar h1 { font-size: 16px; }
+#sidebar nav { display: flex; flex-direction: column; gap: 6px; }
+#sidebar button { background: #383a40; color: #dcddde; border: none; padding: 8px; border-radius: 4px; cursor: pointer; text-align: left; }
+#group-list { list-style: none; padding: 0; margin: 0; flex: 1; overflow-y: auto; }
+#group-list li { padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+#group-list li.active { background: #404249; }
+#main-panel { flex: 1; display: flex; flex-direction: column; padding: 16px; overflow: hidden; }
+.view.hidden { display: none; }
+#message-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.message { background: #2b2d31; padding: 8px 10px; border-radius: 6px; max-width: 70%; }
+.message.user { align-self: flex-end; background: #3b4a6b; }
+.message.system { align-self: center; font-style: italic; color: #999; }
+.message img { max-width: 240px; display: block; margin-top: 6px; border-radius: 4px; }
+#message-form { display: flex; gap: 6px; }
+#message-input { flex: 1; padding: 8px; }
+#queue-indicator { font-size: 12px; color: #a0a3a8; min-height: 16px; }
+form input, form textarea { padding: 6px; margin-bottom: 6px; width: 100%; }
+#agent-list, #group-list { list-style: none; }
+#channel-members { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; flex-wrap: wrap; }
+.member-badge { background: #383a40; padding: 2px 8px; border-radius: 10px; display: inline-flex; align-items: center; gap: 4px; }
+.member-badge button { background: none; border: none; color: #dcddde; cursor: pointer; padding: 0; font-size: 12px; line-height: 1; }

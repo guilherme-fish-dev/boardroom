@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <title>Boardroom</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h1>Boardroom</h1>
+      <nav>
+        <button id="nav-agents">Agentes</button>
+        <button id="nav-settings">Configurações</button>
+      </nav>
+      <h2>Grupos</h2>
+      <ul id="group-list"></ul>
+      <form id="new-group-form">
+        <input id="new-group-name" placeholder="Novo grupo" required />
+        <button type="submit">Criar</button>
+      </form>
+    </aside>
+    <main id="main-panel">
+      <div id="view-channel" class="view">
+        <div id="channel-header"></div>
+        <div id="channel-members">
+          <span id="member-list"></span>
+          <select id="add-member-select">
+            <option value="">+ adicionar agente</option>
+          </select>
+        </div>
+        <div id="queue-indicator"></div>
+        <div id="message-list"></div>
+        <form id="message-form">
+          <input id="message-input" placeholder="Mensagem (@nome para mencionar)" autocomplete="off" />
+          <input id="image-input" type="file" accept="image/*" />
+          <button type="submit">Enviar</button>
+        </form>
+      </div>
+      <div id="view-agents" class="view hidden">
+        <h2>Agentes</h2>
+        <ul id="agent-list"></ul>
+        <form id="agent-form">
+          <input id="agent-name" placeholder="Nome (sem espaços)" required />
+          <textarea id="agent-persona" placeholder="Persona / system prompt" required></textarea>
+          <input id="agent-model" placeholder="Nome do modelo no llama-swap" required />
+          <label><input id="agent-vision" type="checkbox" /> Capaz de visão</label>
+          <button type="submit">Salvar agente</button>
+        </form>
+      </div>
+      <div id="view-settings" class="view hidden">
+        <h2>Configurações</h2>
+        <form id="settings-form">
+          <label>URL base do llama-swap
+            <input id="setting-base-url" required />
+          </label>
+          <label>Modelo de visão padrão
+            <input id="setting-vision-model" />
+          </label>
+          <label>Limite de jobs por grupo
+            <input id="setting-max-pending" type="number" min="1" required />
+          </label>
+          <button type="submit">Salvar</button>
+        </form>
+      </div>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
