@@ -1,8 +1,11 @@
 import asyncio
 import contextlib
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.db import init_db
 from app.queue_worker import process_next_job
@@ -40,6 +43,13 @@ def create_app() -> FastAPI:
         app.state.worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.worker_task
+
+    static_dir = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/")
+    def index() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
 
     return app
 
