@@ -67,3 +67,36 @@ def test_update_agent(db):
     body = resp.json()
     assert body["persona_prompt"] == "novo prompt"
     assert body["vision_capable"] is True
+
+
+def test_update_agent_duplicate_name_rejected(db):
+    client = make_client(db)
+    client.post(
+        "/api/agents",
+        json={
+            "name": "alice",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    )
+    bob = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    ).json()
+
+    resp = client.put(
+        f"/api/agents/{bob['id']}",
+        json={
+            "name": "alice",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    )
+    assert resp.status_code == 409

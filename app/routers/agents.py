@@ -64,11 +64,14 @@ def create_agent(agent: AgentIn) -> AgentOut:
 def update_agent(agent_id: int, agent: AgentIn) -> AgentOut:
     conn = get_connection()
     try:
-        cur = conn.execute(
-            "UPDATE agents SET name = ?, persona_prompt = ?, model_name = ?, vision_capable = ? "
-            "WHERE id = ?",
-            (agent.name, agent.persona_prompt, agent.model_name, int(agent.vision_capable), agent_id),
-        )
+        try:
+            cur = conn.execute(
+                "UPDATE agents SET name = ?, persona_prompt = ?, model_name = ?, vision_capable = ? "
+                "WHERE id = ?",
+                (agent.name, agent.persona_prompt, agent.model_name, int(agent.vision_capable), agent_id),
+            )
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=409, detail="agent name already exists")
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="agent not found")
         conn.commit()
