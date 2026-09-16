@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from app.db import init_db
-from app.routers import agents, groups, settings
+from app.routers import agents, groups, messages, settings
 
 
 def create_app() -> FastAPI:
@@ -10,6 +10,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(groups.router)
     app.include_router(settings.router)
+    app.include_router(messages.router)
     return app
 
 
