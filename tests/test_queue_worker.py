@@ -234,6 +234,81 @@ def test_process_next_job_agent_turn_no_image_for_non_vision_agent(db, monkeypat
     assert calls[0].get("image_base64") is None
 
 
+def test_process_next_job_vision_agent_history_excludes_hidden_description(db, monkeypatch, tmp_path):
+    image_path = tmp_path / "recent.png"
+    image_path.write_bytes(b"fake-image-bytes")
+
+    conn = get_connection()
+    agent_id = _create_agent(conn, vision_capable=1)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (group_id, str(image_path)),
+    )
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        (group_id, "descrição oculta gerada pelo describe_image"),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "vejo uma imagem",
+    )
+
+    process_next_job()
+
+    assert len(calls) == 1
+    assert calls[0]["image_base64"] is not None
+    contents = [m["content"] for m in calls[0]["messages"]]
+    assert not any("descrição oculta gerada pelo describe_image" in c for c in contents)
+
+
+def test_process_next_job_non_vision_agent_history_includes_hidden_description(db, monkeypatch, tmp_path):
+    image_path = tmp_path / "recent.png"
+    image_path.write_bytes(b"fake-image-bytes")
+
+    conn = get_connection()
+    agent_id = _create_agent(conn, vision_capable=0)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (group_id, str(image_path)),
+    )
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        (group_id, "descrição oculta gerada pelo describe_image"),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "texto apenas",
+    )
+
+    process_next_job()
+
+    assert len(calls) == 1
+    contents = [m["content"] for m in calls[0]["messages"]]
+    assert any("descrição oculta gerada pelo describe_image" in c for c in contents)
+
+
 def test_process_next_job_no_pending_jobs_is_noop(db):
     assert process_next_job() is False
 

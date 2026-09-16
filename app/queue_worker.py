@@ -25,12 +25,14 @@ def _fetch_next_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def _build_history(conn: sqlite3.Connection, group_id: int, agent_persona: str) -> list[dict]:
-    rows = conn.execute(
-        "SELECT sender_type, sender_id, content FROM messages "
-        "WHERE group_id = ? ORDER BY id",
-        (group_id,),
-    ).fetchall()
+def _build_history(
+    conn: sqlite3.Connection, group_id: int, agent_persona: str, *, exclude_hidden: bool = False
+) -> list[dict]:
+    query = "SELECT sender_type, sender_id, content FROM messages WHERE group_id = ?"
+    if exclude_hidden:
+        query += " AND hidden = 0"
+    query += " ORDER BY id"
+    rows = conn.execute(query, (group_id,)).fetchall()
     messages = [{"role": "system", "content": agent_persona}]
     for row in rows:
         role = "assistant" if row["sender_type"] == "agent" else "user"
@@ -72,7 +74,6 @@ def _find_recent_image(conn: sqlite3.Connection, group_id: int) -> str | None:
 def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     agent = conn.execute("SELECT * FROM agents WHERE id = ?", (job["agent_id"],)).fetchone()
     base_url = _get_setting(conn, "llama_swap_base_url")
-    history = _build_history(conn, job["group_id"], agent["persona_prompt"])
 
     image_base64 = None
     if agent["vision_capable"]:
@@ -80,6 +81,10 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         if image_path:
             with open(image_path, "rb") as f:
                 image_base64 = base64.b64encode(f.read()).decode("ascii")
+
+    history = _build_history(
+        conn, job["group_id"], agent["persona_prompt"], exclude_hidden=image_base64 is not None
+    )
 
     reply = chat_completion(
         base_url=base_url,
