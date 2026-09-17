@@ -143,6 +143,40 @@ async function loadAgents() {
   }
 }
 
+async function loadModels() {
+  const modelSelect = document.getElementById("agent-model");
+  const submitButton = document.querySelector("#agent-form button[type=submit]");
+  try {
+    const data = await api("/api/models");
+    modelSelect.innerHTML = "";
+    modelSelect.disabled = false;
+    submitButton.disabled = false;
+
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "selecione um modelo";
+    modelSelect.appendChild(emptyOption);
+
+    for (const model of data.models) {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      modelSelect.appendChild(option);
+    }
+  } catch (err) {
+    console.error("Failed to load models:", err);
+    modelSelect.innerHTML = "";
+    const errorOption = document.createElement("option");
+    errorOption.value = "";
+    errorOption.textContent = "Erro ao carregar modelos (verifique o llama-swap)";
+    errorOption.disabled = true;
+    errorOption.selected = true;
+    modelSelect.appendChild(errorOption);
+    modelSelect.disabled = true;
+    submitButton.disabled = true;
+  }
+}
+
 async function loadSettings() {
   const settings = await api("/api/settings");
   document.getElementById("setting-base-url").value = settings.llama_swap_base_url;
@@ -153,6 +187,7 @@ async function loadSettings() {
 document.getElementById("nav-agents").onclick = async () => {
   showView("agents");
   await loadAgents();
+  await loadModels();
 };
 
 document.getElementById("nav-settings").onclick = async () => {
