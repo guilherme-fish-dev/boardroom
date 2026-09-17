@@ -55,3 +55,32 @@ def chat_completion(
     finally:
         if owns_client:
             client.close()
+
+
+def list_models(
+    *,
+    base_url: str,
+    http_client: httpx.Client | None = None,
+    timeout: float = 10.0,
+) -> list[str]:
+    """Call the llama-swap OpenAI-compatible /v1/models endpoint and return model ids.
+
+    Raises:
+        httpx.ConnectError: if the server is unreachable.
+        httpx.TimeoutException: if the request times out.
+        httpx.HTTPStatusError: if the server responds with an error status.
+        ValueError: if the response body doesn't have the expected shape.
+    """
+    owns_client = http_client is None
+    client = http_client or httpx.Client(timeout=timeout)
+    try:
+        response = client.get(f"{base_url}/v1/models", timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        try:
+            return [item["id"] for item in data["data"]]
+        except (KeyError, TypeError) as exc:
+            raise ValueError(f"resposta inesperada do llama-swap: {data}") from exc
+    finally:
+        if owns_client:
+            client.close()

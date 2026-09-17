@@ -85,3 +85,46 @@ def test_chat_completion_raises_value_error_on_malformed_response():
             messages=[{"role": "user", "content": "oi"}],
             http_client=client,
         )
+
+
+from app.llm_client import list_models
+
+
+def test_list_models_returns_ids():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "qwen2.5-7b"}, {"id": "llava-7b"}]},
+        )
+
+    client = _client_with_transport(handler)
+    result = list_models(base_url="http://localhost:8080", http_client=client)
+
+    assert result == ["qwen2.5-7b", "llava-7b"]
+
+
+def test_list_models_raises_on_http_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "boom"})
+
+    client = _client_with_transport(handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        list_models(base_url="http://localhost:8080", http_client=client)
+
+
+def test_list_models_raises_value_error_on_malformed_response():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"not_data": []})
+
+    client = _client_with_transport(handler)
+    with pytest.raises(ValueError):
+        list_models(base_url="http://localhost:8080", http_client=client)
+
+
+def test_list_models_raises_value_error_when_item_has_no_id():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"not_id": "x"}]})
+
+    client = _client_with_transport(handler)
+    with pytest.raises(ValueError):
+        list_models(base_url="http://localhost:8080", http_client=client)
