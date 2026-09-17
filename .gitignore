@@ -8,3 +8,7 @@ venv/
 node_modules/
 
 .worktrees/
+
+boardroom.pid
+boardroom.log
+boardroom.err.log
