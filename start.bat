@@ -30,6 +30,11 @@ if not exist "boardroom.pid" (
 )
 
 set /p PID=<boardroom.pid
+if "!PID!"=="" (
+    echo [Boardroom] Falha ao iniciar o servidor ^(pid file vazio^). Veja boardroom.err.log.
+    del "boardroom.pid"
+    exit /b 1
+)
 echo [Boardroom] Iniciado ^(PID !PID!^). Logs em boardroom.log / boardroom.err.log.
 
 timeout /t 2 /nobreak >nul
