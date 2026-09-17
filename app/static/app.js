@@ -164,6 +164,7 @@ async function loadModels() {
       modelSelect.appendChild(option);
     }
   } catch (err) {
+    console.error("Failed to load models:", err);
     modelSelect.innerHTML = "";
     const errorOption = document.createElement("option");
     errorOption.value = "";
