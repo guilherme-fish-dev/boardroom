@@ -1,5 +1,5 @@
 :root {
-  --hue: 55;
+  --hue: 48;
   --bg: oklch(0.16 0.014 var(--hue));
   --bg-elevated: oklch(0.205 0.016 var(--hue));
   --surface: oklch(0.24 0.018 var(--hue));
@@ -451,4 +451,76 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 .field-error { font-size: 12px; color: var(--danger); }
 
 .agent-form-actions { display: flex; gap: 8px; align-items: center; }
+
+/* Task 9: cards de conversa */
+#conversation-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.conversation-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink-muted);
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.conversation-card:hover { background: var(--surface-hover); color: var(--ink); }
+.conversation-card.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.conversation-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.conversation-card-actions { display: inline-flex; gap: 6px; flex: 0 0 auto; }
+.conversation-card-rename, .conversation-card-delete { color: var(--ink-faint); font-size: 13px; line-height: 1; transition: color 150ms ease; }
+.conversation-card.active .conversation-card-rename, .conversation-card.active .conversation-card-delete { color: var(--accent-ink); opacity: 0.75; }
+.conversation-card-rename:hover { color: var(--ink); }
+.conversation-card-delete:hover { color: var(--danger); }
+
+/* Task 9: painel de contexto */
+.context-block { display: flex; flex-direction: column; gap: 8px; }
+.context-block-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-faint); }
+#context-conversation-info { font-size: 13px; color: var(--ink-muted); }
+.tool-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+/* Task 9: modal de grupo e grade de emoji */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+}
+.modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  width: min(360px, calc(100vw - 32px));
+}
+.modal h3 { margin: 0 0 14px; font-size: 15px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+#group-icon-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 14px; }
+.icon-grid-option {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 18px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.icon-grid-option:hover { background: var(--surface-hover); }
+.icon-grid-option.selected { border-color: var(--accent); background: var(--surface-hover); }
 
