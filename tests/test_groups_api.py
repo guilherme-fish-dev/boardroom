@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.db import get_connection
 from app.main import create_app
 
 
@@ -61,3 +62,86 @@ def test_remove_member(db):
 
     resp = client.get(f"/api/groups/{group['id']}/members")
     assert resp.json() == []
+
+
+def test_update_group_renames_it(db):
+    client = make_client(db)
+    group = client.post("/api/groups", json={"name": "investidores"}).json()
+
+    resp = client.put(f"/api/groups/{group['id']}", json={"name": "financas"})
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "financas"
+
+    resp = client.get("/api/groups")
+    assert [g["name"] for g in resp.json()] == ["financas"]
+
+
+def test_update_group_duplicate_name_rejected(db):
+    client = make_client(db)
+    client.post("/api/groups", json={"name": "investidores"})
+    produto = client.post("/api/groups", json={"name": "produto"}).json()
+
+    resp = client.put(f"/api/groups/{produto['id']}", json={"name": "investidores"})
+    assert resp.status_code == 409
+
+
+def test_update_group_returns_404_for_unknown_id(db):
+    client = make_client(db)
+    resp = client.put("/api/groups/9999", json={"name": "novo-nome"})
+    assert resp.status_code == 404
+
+
+def test_delete_group_removes_it(db):
+    client = make_client(db)
+    group = client.post("/api/groups", json={"name": "investidores"}).json()
+
+    resp = client.delete(f"/api/groups/{group['id']}")
+    assert resp.status_code == 204
+
+    resp = client.get("/api/groups")
+    assert resp.json() == []
+
+
+def test_delete_group_returns_404_for_unknown_id(db):
+    client = make_client(db)
+    resp = client.delete("/api/groups/9999")
+    assert resp.status_code == 404
+
+
+def test_delete_group_cascades_members_messages_and_jobs(db):
+    client = make_client(db)
+    agent = _create_agent(client)
+    group = client.post("/api/groups", json={"name": "investidores"}).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": agent["id"]})
+    client.post(f"/api/groups/{group['id']}/messages", json={"content": "oi"})
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+            "VALUES (?, ?, 'agent_turn', 1, '{}')",
+            (group["id"], agent["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = client.delete(f"/api/groups/{group['id']}")
+    assert resp.status_code == 204
+
+    conn = get_connection()
+    try:
+        members = conn.execute(
+            "SELECT * FROM group_members WHERE group_id = ?", (group["id"],)
+        ).fetchall()
+        messages = conn.execute(
+            "SELECT * FROM messages WHERE group_id = ?", (group["id"],)
+        ).fetchall()
+        jobs = conn.execute(
+            "SELECT * FROM queue_jobs WHERE group_id = ?", (group["id"],)
+        ).fetchall()
+    finally:
+        conn.close()
+    assert members == []
+    assert messages == []
+    assert jobs == []

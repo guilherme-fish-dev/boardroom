@@ -1,6 +1,6 @@
 import sqlite3
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from app.db import get_connection, get_setting
@@ -132,3 +132,16 @@ def generate_persona(payload: GeneratePersonaIn) -> GeneratePersonaOut:
         raise HTTPException(status_code=502, detail=f"não foi possível gerar a persona: {exc}")
 
     return GeneratePersonaOut(persona_prompt=persona_prompt)
+
+
+@router.delete("/{agent_id}", status_code=204)
+def delete_agent(agent_id: int) -> Response:
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="agent not found")
+        conn.commit()
+    finally:
+        conn.close()
+    return Response(status_code=204)

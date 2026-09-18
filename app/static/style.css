@@ -147,7 +147,9 @@ body {
 
 #channel-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
-#channel-header { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+#channel-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+
+#channel-header-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; }
 
 #channel-members {
   display: flex;
@@ -332,8 +334,11 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
 }
-#agent-list li.empty-hint { color: var(--ink-faint); font-style: italic; border-style: dashed; }
+#agent-list li:hover { background: var(--surface-hover); color: var(--ink); }
+#agent-list li.empty-hint { color: var(--ink-faint); font-style: italic; border-style: dashed; cursor: default; }
+#agent-list li.empty-hint:hover { background: var(--surface); color: var(--ink-faint); }
 .agent-avatar-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 
 #agent-form, #settings-form { max-width: 420px; }
@@ -370,3 +375,5 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 .btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
 
 .field-error { font-size: 12px; color: var(--danger); }
+
+.agent-form-actions { display: flex; gap: 8px; align-items: center; }

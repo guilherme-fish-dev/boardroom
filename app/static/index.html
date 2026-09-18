@@ -30,7 +30,11 @@
           <p>Selecione um grupo na barra lateral, ou crie um novo pra começar uma conversa.</p>
         </div>
         <div id="channel-content" class="hidden">
-          <div id="channel-header"></div>
+          <div id="channel-header">
+            <span id="channel-header-name"></span>
+            <button type="button" id="rename-group-btn" class="btn-secondary">Renomear</button>
+            <button type="button" id="delete-group-btn" class="btn-secondary">Apagar</button>
+          </div>
           <div id="channel-members">
             <span id="member-list"></span>
             <select id="add-member-select">
@@ -66,7 +70,11 @@
             <select id="agent-model" required></select>
           </label>
           <label class="checkbox-label"><input id="agent-vision" type="checkbox" /> Capaz de visão</label>
-          <button type="submit" class="btn-primary">Salvar agente</button>
+          <div class="agent-form-actions">
+            <button type="submit" class="btn-primary" id="agent-submit-btn">Salvar agente</button>
+            <button type="button" id="cancel-edit-agent-btn" class="btn-secondary hidden">Cancelar edição</button>
+            <button type="button" id="delete-agent-btn" class="btn-secondary hidden">Apagar agente</button>
+          </div>
         </form>
       </div>
       <div id="view-settings" class="view hidden">
