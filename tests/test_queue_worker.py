@@ -247,7 +247,7 @@ def test_process_next_job_vision_agent_history_excludes_hidden_description(db, m
         (group_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) VALUES (?, 'system', ?, 1, 'image_description')",
         (group_id, "descrição oculta gerada pelo describe_image"),
     )
     conn.execute(
@@ -285,7 +285,7 @@ def test_process_next_job_non_vision_agent_history_includes_hidden_description(d
         (group_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) VALUES (?, 'system', ?, 1, 'image_description')",
         (group_id, "descrição oculta gerada pelo describe_image"),
     )
     conn.execute(

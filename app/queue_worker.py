@@ -25,15 +25,27 @@ def _fetch_next_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
     ).fetchone()
 
 
+WEB_SEARCH_INSTRUCTIONS = (
+    "\n\nVocê pode pesquisar na internet quando precisar de informação atual ou que não sabe. "
+    "Para isso, responda usando SOMENTE esta linha, nada mais: BUSCAR: sua consulta aqui. "
+    "Você vai receber os resultados da busca e poderá responder normalmente em seguida, "
+    "ou buscar de novo (no máximo 3 vezes) se ainda precisar de mais informação."
+)
+
+
 def _build_history(
-    conn: sqlite3.Connection, group_id: int, agent_persona: str, *, exclude_hidden: bool = False
+    conn: sqlite3.Connection,
+    group_id: int,
+    agent_persona: str,
+    *,
+    exclude_image_descriptions: bool = False,
 ) -> list[dict]:
     query = "SELECT sender_type, sender_id, content FROM messages WHERE group_id = ?"
-    if exclude_hidden:
-        query += " AND hidden = 0"
+    if exclude_image_descriptions:
+        query += " AND NOT (hidden = 1 AND hidden_kind = 'image_description')"
     query += " ORDER BY id"
     rows = conn.execute(query, (group_id,)).fetchall()
-    messages = [{"role": "system", "content": agent_persona}]
+    messages = [{"role": "system", "content": agent_persona + WEB_SEARCH_INSTRUCTIONS}]
     for row in rows:
         role = "assistant" if row["sender_type"] == "agent" else "user"
         messages.append({"role": role, "content": row["content"]})
@@ -56,7 +68,8 @@ def _process_describe_image(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     )
 
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) "
+        "VALUES (?, 'system', ?, 1, 'image_description')",
         (job["group_id"], description),
     )
     conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
@@ -83,7 +96,10 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
                 image_base64 = base64.b64encode(f.read()).decode("ascii")
 
     history = _build_history(
-        conn, job["group_id"], agent["persona_prompt"], exclude_hidden=image_base64 is not None
+        conn,
+        job["group_id"],
+        agent["persona_prompt"],
+        exclude_image_descriptions=image_base64 is not None,
     )
 
     reply = chat_completion(
