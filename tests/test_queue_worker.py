@@ -247,7 +247,7 @@ def test_process_next_job_vision_agent_history_excludes_hidden_description(db, m
         (group_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) VALUES (?, 'system', ?, 1, 'image_description')",
         (group_id, "descrição oculta gerada pelo describe_image"),
     )
     conn.execute(
@@ -272,6 +272,43 @@ def test_process_next_job_vision_agent_history_excludes_hidden_description(db, m
     assert not any("descrição oculta gerada pelo describe_image" in c for c in contents)
 
 
+def test_process_next_job_vision_agent_history_includes_hidden_message_without_kind(db, monkeypatch, tmp_path):
+    image_path = tmp_path / "recent.png"
+    image_path.write_bytes(b"fake-image-bytes")
+
+    conn = get_connection()
+    agent_id = _create_agent(conn, vision_capable=1)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (group_id, str(image_path)),
+    )
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        (group_id, "mensagem oculta sem hidden_kind"),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "vejo uma imagem",
+    )
+
+    process_next_job()
+
+    assert len(calls) == 1
+    contents = [m["content"] for m in calls[0]["messages"]]
+    assert any("mensagem oculta sem hidden_kind" in c for c in contents)
+
+
 def test_process_next_job_non_vision_agent_history_includes_hidden_description(db, monkeypatch, tmp_path):
     image_path = tmp_path / "recent.png"
     image_path.write_bytes(b"fake-image-bytes")
@@ -285,7 +322,7 @@ def test_process_next_job_non_vision_agent_history_includes_hidden_description(d
         (group_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) VALUES (?, 'system', ?, 1, 'image_description')",
         (group_id, "descrição oculta gerada pelo describe_image"),
     )
     conn.execute(
@@ -349,3 +386,305 @@ def test_process_next_job_respects_loop_limit(db, monkeypatch):
         conn.close()
     assert pending_count == 19
     assert warning is not None
+
+
+def test_process_next_job_agent_searches_once_then_answers(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que dia é hoje?')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(["BUSCAR: data de hoje", "Hoje é 18 de setembro de 2026."])
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+    monkeypatch.setattr("app.queue_worker.web_search", lambda query, **kwargs: "Hoje é 18/09/2026.")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+        hidden_messages = conn.execute(
+            "SELECT * FROM messages WHERE hidden = 1 AND hidden_kind = 'search_result'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Hoje é 18 de setembro de 2026."
+    assert len(hidden_messages) == 1
+    assert "data de hoje" in hidden_messages[0]["content"]
+    assert "18/09/2026" in hidden_messages[0]["content"]
+
+
+def test_process_next_job_agent_hits_search_limit_and_is_forced_to_answer(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'pesquise sem parar')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(
+        [
+            "BUSCAR: um",
+            "BUSCAR: dois",
+            "BUSCAR: tres",
+            "BUSCAR: quatro",
+            "Não encontrei nada definitivo, mas aqui está o que sei.",
+        ]
+    )
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+    monkeypatch.setattr("app.queue_worker.web_search", lambda query, **kwargs: f"resultado de {query}")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+        hidden_messages = conn.execute(
+            "SELECT * FROM messages WHERE hidden = 1 AND hidden_kind = 'search_result'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Não encontrei nada definitivo, mas aqui está o que sei."
+    assert len(hidden_messages) == 3
+
+
+def test_process_next_job_search_failure_does_not_crash_the_job(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'oi')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(["BUSCAR: algo", "Sem internet, mas posso ajudar de outra forma."])
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+
+    def _raise(query, **kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("app.queue_worker.web_search", _raise)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM queue_jobs").fetchone()
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert job["status"] == "done"
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Sem internet, mas posso ajudar de outra forma."
+
+
+def test_process_next_job_forced_answer_still_searching_falls_back_to_generic_message(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'pesquise sem parar')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(
+        [
+            "BUSCAR: um",
+            "BUSCAR: dois",
+            "BUSCAR: tres",
+            "BUSCAR: quatro",
+            "BUSCAR: mais uma vez",
+        ]
+    )
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+    monkeypatch.setattr("app.queue_worker.web_search", lambda query, **kwargs: f"resultado de {query}")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == (
+        "Não consegui concluir a busca a tempo, mas posso ajudar com o que já sei — pode perguntar de novo."
+    )
+
+
+def test_process_next_job_detects_buscar_even_with_prose_around_it(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que dia é hoje?')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(["Vou pesquisar isso.\nBUSCAR: data de hoje", "Hoje é 18 de setembro de 2026."])
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+
+    captured_queries = []
+
+    def _fake_web_search(query, **kwargs):
+        captured_queries.append(query)
+        return "Hoje é 18/09/2026."
+
+    monkeypatch.setattr("app.queue_worker.web_search", _fake_web_search)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert captured_queries == ["data de hoje"]
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Hoje é 18 de setembro de 2026."
+
+
+def test_process_next_job_does_not_treat_buscar_mention_mid_sentence_as_search_command(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'o que é BUSCAR?')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    reply_text = "Aqui está minha resposta final sobre BUSCAR: como conceito de programação."
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: reply_text)
+
+    def _fail_if_called(query, **kwargs):
+        raise AssertionError("web_search não deveria ser chamado para uma menção no meio da frase")
+
+    monkeypatch.setattr("app.queue_worker.web_search", _fail_if_called)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == reply_text
+
+
+def test_process_next_job_buscar_same_line_preamble_leaks_as_text_not_search(db, monkeypatch):
+    """Documents the accepted trade-off of the line-anchored SEARCH_PATTERN: a preamble on the
+    SAME line as `BUSCAR:` (e.g. "Vou pesquisar. BUSCAR: x") is deliberately NOT detected as a
+    search command, so it leaks through as plain text instead of triggering a search. This is
+    the accepted risk (see the comment above SEARCH_PATTERN in app/queue_worker.py) — a smaller
+    cost than the false positive of matching "BUSCAR:" anywhere in the response, which fires
+    unwanted network calls. Do not "fix" this by switching back to an unanchored `.search()`.
+    """
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que tempo faz em SP?')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    reply_text = "Vou pesquisar. BUSCAR: clima em SP"
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: reply_text)
+
+    def _fail_if_called(query, **kwargs):
+        raise AssertionError("web_search não deveria ser chamado quando o preâmbulo está na mesma linha")
+
+    monkeypatch.setattr("app.queue_worker.web_search", _fail_if_called)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == reply_text

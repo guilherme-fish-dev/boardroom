@@ -3,12 +3,14 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import sqlite3
 
 from app.db import get_connection
 from app.llm_client import chat_completion
 from app.mentions import extract_mentions
 from app.routers.messages import enqueue_mentions
+from app.web_search import web_search
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +27,36 @@ def _fetch_next_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
     ).fetchone()
 
 
+WEB_SEARCH_INSTRUCTIONS = (
+    "\n\nVocê pode pesquisar na internet quando precisar de informação atual ou que não sabe. "
+    "Para isso, responda usando SOMENTE esta linha, nada mais: BUSCAR: sua consulta aqui. "
+    "Você vai receber os resultados da busca e poderá responder normalmente em seguida, "
+    "ou buscar de novo (no máximo 3 vezes) se ainda precisar de mais informação."
+)
+
+# Ancorado ao início de linha (não à string inteira) pra pegar o padrão mesmo quando o
+# modelo escreve um preâmbulo numa linha separada antes de "BUSCAR: ...". Deliberadamente
+# NÃO detecta "BUSCAR:" no meio de uma frase (ex.: "minha resposta sobre BUSCAR: conceito") —
+# isso evitaria falso positivo (busca disparada por engano) às custas de eventualmente perder
+# um preâmbulo que fica na MESMA linha do comando (ex.: "Vou pesquisar. BUSCAR: x"), que nesse
+# caso vaza como texto normal — um risco menor que ativar uma busca indevida.
+SEARCH_PATTERN = re.compile(r"^\s*BUSCAR:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+MAX_SEARCHES_PER_TURN = 3
+
+
 def _build_history(
-    conn: sqlite3.Connection, group_id: int, agent_persona: str, *, exclude_hidden: bool = False
+    conn: sqlite3.Connection,
+    group_id: int,
+    agent_persona: str,
+    *,
+    exclude_image_descriptions: bool = False,
 ) -> list[dict]:
     query = "SELECT sender_type, sender_id, content FROM messages WHERE group_id = ?"
-    if exclude_hidden:
-        query += " AND hidden = 0"
+    if exclude_image_descriptions:
+        query += " AND (hidden = 0 OR IFNULL(hidden_kind, '') != 'image_description')"
     query += " ORDER BY id"
     rows = conn.execute(query, (group_id,)).fetchall()
-    messages = [{"role": "system", "content": agent_persona}]
+    messages = [{"role": "system", "content": agent_persona + WEB_SEARCH_INSTRUCTIONS}]
     for row in rows:
         role = "assistant" if row["sender_type"] == "agent" else "user"
         messages.append({"role": role, "content": row["content"]})
@@ -56,7 +79,8 @@ def _process_describe_image(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     )
 
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) "
+        "VALUES (?, 'system', ?, 1, 'image_description')",
         (job["group_id"], description),
     )
     conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
@@ -83,7 +107,10 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
                 image_base64 = base64.b64encode(f.read()).decode("ascii")
 
     history = _build_history(
-        conn, job["group_id"], agent["persona_prompt"], exclude_hidden=image_base64 is not None
+        conn,
+        job["group_id"],
+        agent["persona_prompt"],
+        exclude_image_descriptions=image_base64 is not None,
     )
 
     reply = chat_completion(
@@ -92,6 +119,40 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         messages=history,
         image_base64=image_base64,
     )
+
+    searches_done = 0
+    match = SEARCH_PATTERN.search(reply)
+    while match and searches_done < MAX_SEARCHES_PER_TURN:
+        query = match.group(1).strip()
+        try:
+            results = web_search(query)
+        except Exception as exc:
+            results = f"Erro ao buscar: {exc}"
+
+        conn.execute(
+            "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) "
+            "VALUES (?, 'system', ?, 1, 'search_result')",
+            (job["group_id"], f'Busca por "{query}":\n{results}'),
+        )
+
+        history.append({"role": "assistant", "content": reply})
+        history.append({"role": "user", "content": f'Resultados da busca por "{query}":\n{results}'})
+        reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
+        searches_done += 1
+        match = SEARCH_PATTERN.search(reply)
+
+    if match:
+        history.append({"role": "assistant", "content": reply})
+        history.append(
+            {
+                "role": "user",
+                "content": "Você atingiu o limite de buscas para esta resposta. Responda com base "
+                "no que você já sabe, sem buscar de novo.",
+            }
+        )
+        reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
+        if SEARCH_PATTERN.search(reply):
+            reply = "Não consegui concluir a busca a tempo, mas posso ajudar com o que já sei — pode perguntar de novo."
 
     cur = conn.execute(
         "INSERT INTO messages (group_id, sender_type, sender_id, content) "
