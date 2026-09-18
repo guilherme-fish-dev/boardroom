@@ -251,46 +251,81 @@ async function loadAgents() {
   }
 }
 
-async function loadModels() {
-  const modelSelect = document.getElementById("agent-model");
-  const submitButton = document.querySelector("#agent-form button[type=submit]");
+async function populateModelSelect(selectEl, currentValue, { allowEmpty, emptyLabel, onError } = {}) {
   try {
     const data = await api("/api/models");
-    modelSelect.innerHTML = "";
-    modelSelect.disabled = false;
-    submitButton.disabled = false;
+    selectEl.innerHTML = "";
+    selectEl.disabled = false;
 
-    const emptyOption = document.createElement("option");
-    emptyOption.value = "";
-    emptyOption.textContent = "selecione um modelo";
-    modelSelect.appendChild(emptyOption);
+    if (allowEmpty) {
+      const emptyOption = document.createElement("option");
+      emptyOption.value = "";
+      emptyOption.textContent = emptyLabel;
+      selectEl.appendChild(emptyOption);
+    }
 
     for (const model of data.models) {
       const option = document.createElement("option");
       option.value = model;
       option.textContent = model;
-      modelSelect.appendChild(option);
+      selectEl.appendChild(option);
     }
+
+    if (currentValue && !data.models.includes(currentValue)) {
+      const orphanOption = document.createElement("option");
+      orphanOption.value = currentValue;
+      orphanOption.textContent = `${currentValue} (não encontrado no llama-swap)`;
+      selectEl.appendChild(orphanOption);
+    }
+
+    selectEl.value = currentValue || "";
+    return true;
   } catch (err) {
     console.error("Failed to load models:", err);
-    modelSelect.innerHTML = "";
+    selectEl.innerHTML = "";
     const errorOption = document.createElement("option");
-    errorOption.value = "";
+    errorOption.value = currentValue || "";
     errorOption.textContent = "Erro ao carregar modelos (verifique o llama-swap)";
     errorOption.disabled = true;
     errorOption.selected = true;
-    modelSelect.appendChild(errorOption);
-    modelSelect.disabled = true;
-    submitButton.disabled = true;
+    selectEl.appendChild(errorOption);
+    selectEl.disabled = true;
+    if (onError) onError(err);
+    return false;
   }
+}
+
+async function loadModels() {
+  const modelSelect = document.getElementById("agent-model");
+  const submitButton = document.querySelector("#agent-form button[type=submit]");
+  const ok = await populateModelSelect(modelSelect, "", {
+    allowEmpty: true,
+    emptyLabel: "selecione um modelo",
+    onError: () => {
+      submitButton.disabled = true;
+    },
+  });
+  if (ok) submitButton.disabled = false;
 }
 
 async function loadSettings() {
   const settings = await api("/api/settings");
   document.getElementById("setting-base-url").value = settings.llama_swap_base_url;
-  document.getElementById("setting-vision-model").value = settings.default_vision_model;
   document.getElementById("setting-max-pending").value = settings.max_pending_per_group;
-  document.getElementById("setting-assistant-model").value = settings.assistant_model;
+
+  // Sem onError: ao contrário do formulário de agente, falha ao buscar modelos
+  // aqui não deve travar o botão "Salvar" de Configurações (o usuário pode estar
+  // justamente tentando corrigir a URL do llama-swap neste mesmo formulário).
+  await populateModelSelect(
+    document.getElementById("setting-vision-model"),
+    settings.default_vision_model,
+    { allowEmpty: true, emptyLabel: "nenhum (não configurado)" }
+  );
+  await populateModelSelect(
+    document.getElementById("setting-assistant-model"),
+    settings.assistant_model,
+    { allowEmpty: true, emptyLabel: "nenhum (não configurado)" }
+  );
 }
 
 document.getElementById("sidebar-toggle").onclick = () => {
