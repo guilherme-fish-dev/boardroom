@@ -160,28 +160,31 @@ async function loadConversations(groupId) {
   state.conversations = await api(`/api/groups/${groupId}/conversations`);
   const stillActive = state.conversations.some((c) => c.id === state.activeConversationId);
   if (stillActive) {
-    renderConversationTabs();
+    renderConversationList();
   } else {
     await selectConversation(state.conversations[0].id);
   }
 }
 
-function renderConversationTabs() {
-  const bar = document.getElementById("conversation-tabs");
-  bar.innerHTML = "";
+function renderConversationList() {
+  const list = document.getElementById("conversation-list");
+  list.innerHTML = "";
 
   for (const conversation of state.conversations) {
-    const tab = document.createElement("button");
-    tab.type = "button";
-    tab.className = "conversation-tab" + (conversation.id === state.activeConversationId ? " active" : "");
-    tab.onclick = () => selectConversation(conversation.id);
+    const card = document.createElement("li");
+    card.className = "conversation-card" + (conversation.id === state.activeConversationId ? " active" : "");
+    card.onclick = () => selectConversation(conversation.id);
 
-    const label = document.createElement("span");
-    label.textContent = conversation.name;
-    tab.appendChild(label);
+    const name = document.createElement("span");
+    name.className = "conversation-card-name";
+    name.textContent = conversation.name;
+    card.appendChild(name);
+
+    const actions = document.createElement("span");
+    actions.className = "conversation-card-actions";
 
     const renameBtn = document.createElement("span");
-    renameBtn.className = "conversation-tab-rename";
+    renameBtn.className = "conversation-card-rename";
     renameBtn.textContent = "✎";
     renameBtn.tabIndex = 0;
     renameBtn.setAttribute("role", "button");
@@ -196,7 +199,7 @@ function renderConversationTabs() {
       );
       const target = state.conversations.find((c) => c.id === conversation.id);
       if (target) target.name = updated.name;
-      renderConversationTabs();
+      renderConversationList();
     };
     renameBtn.onclick = renameConversation;
     renameBtn.onkeydown = (e) => {
@@ -205,13 +208,11 @@ function renderConversationTabs() {
         renameConversation(e);
       }
     };
-    tab.appendChild(renameBtn);
+    actions.appendChild(renameBtn);
 
     const closeBtn = document.createElement("span");
-    closeBtn.className = "conversation-tab-delete";
+    closeBtn.className = "conversation-card-delete";
     closeBtn.textContent = "×";
-    // Not a nested <button> (invalid HTML inside the tab's own <button>) — tabindex + keydown
-    // keep it keyboard-reachable and activatable like a real button.
     closeBtn.tabIndex = 0;
     closeBtn.setAttribute("role", "button");
     closeBtn.setAttribute("aria-label", `Apagar conversa ${conversation.name}`);
@@ -226,7 +227,7 @@ function renderConversationTabs() {
       if (state.activeConversationId === conversation.id) {
         await selectConversation(remaining[0].id);
       } else {
-        renderConversationTabs();
+        renderConversationList();
       }
     };
     closeBtn.onclick = deleteConversation;
@@ -236,26 +237,11 @@ function renderConversationTabs() {
         deleteConversation(e);
       }
     };
-    tab.appendChild(closeBtn);
-    bar.appendChild(tab);
-  }
+    actions.appendChild(closeBtn);
 
-  const newBtn = document.createElement("button");
-  newBtn.type = "button";
-  newBtn.id = "new-conversation-btn";
-  newBtn.textContent = "+";
-  newBtn.setAttribute("aria-label", "Nova conversa");
-  newBtn.onclick = async () => {
-    const name = prompt("Nome da nova conversa:");
-    if (!name || !name.trim()) return;
-    const conversation = await api(`/api/groups/${state.activeGroupId}/conversations`, {
-      method: "POST",
-      body: JSON.stringify({ name: name.trim() }),
-    });
-    state.conversations.push(conversation);
-    await selectConversation(conversation.id);
-  };
-  bar.appendChild(newBtn);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
 }
 
 async function selectConversation(conversationId) {
@@ -270,7 +256,7 @@ async function selectConversation(conversationId) {
   document.getElementById("message-list").innerHTML = "";
   document.getElementById("queue-indicator").textContent = "";
   document.getElementById("stop-queue-btn").classList.add("hidden");
-  renderConversationTabs();
+  renderConversationList();
   await pollMessages();
   await pollPendingStatus();
 }
@@ -794,6 +780,18 @@ document.getElementById("rename-group-btn").onclick = () => {
   const group = state.groups.find((g) => g.id === state.activeGroupId);
   if (!group) return;
   openGroupForm({ groupId: group.id, name: group.name, icon: group.icon });
+};
+
+document.getElementById("new-conversation-btn").onclick = async () => {
+  if (!state.activeGroupId) return;
+  const name = prompt("Nome da nova conversa:");
+  if (!name || !name.trim()) return;
+  const conversation = await api(`/api/groups/${state.activeGroupId}/conversations`, {
+    method: "POST",
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  state.conversations.push(conversation);
+  await selectConversation(conversation.id);
 };
 
 document.getElementById("stop-queue-btn").onclick = async () => {
