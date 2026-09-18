@@ -8,52 +8,86 @@
 </head>
 <body>
   <div id="app">
-    <button id="sidebar-toggle" type="button" aria-label="Alternar menu" aria-expanded="false">☰</button>
-    <aside id="sidebar">
-      <h1>Boardroom</h1>
-      <nav>
-        <button id="nav-agents" type="button">Agentes</button>
-        <button id="nav-settings" type="button">Configurações</button>
-      </nav>
-      <div class="sidebar-section">
-        <div class="sidebar-section-title">Grupos</div>
-        <ul id="group-list"></ul>
-        <form id="new-group-form" class="inline-form">
-          <input id="new-group-name" placeholder="Novo grupo" required />
-          <button type="submit" class="btn-primary">Criar</button>
-        </form>
+    <button id="sidebar-toggle" type="button" aria-label="Abrir grupos" aria-expanded="false">☰</button>
+
+    <aside id="groups-col">
+      <button type="button" id="groups-collapse-btn" class="col-handle" aria-label="Recolher grupos" aria-expanded="true">‹</button>
+      <div class="col-body">
+        <h1>Boardroom</h1>
+        <nav>
+          <button id="nav-agents" type="button">Agentes</button>
+          <button id="nav-settings" type="button">Configurações</button>
+        </nav>
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">Grupos</div>
+          <input id="group-search" type="search" placeholder="Buscar grupos" />
+          <ul id="group-list"></ul>
+          <button type="button" id="new-group-btn" class="btn-primary">+ Novo grupo</button>
+        </div>
       </div>
     </aside>
+
+    <aside id="conversations-col">
+      <button type="button" id="conversations-toggle-btn" class="mobile-only-toggle" aria-label="Abrir conversas" aria-expanded="false">☰</button>
+      <button type="button" id="conversations-collapse-btn" class="col-handle" aria-label="Recolher conversas" aria-expanded="true">‹</button>
+      <div class="col-body">
+        <div class="col-header">
+          <span>Conversas</span>
+        </div>
+        <button type="button" id="new-conversation-btn" class="btn-primary">+ Nova conversa</button>
+        <ul id="conversation-list"></ul>
+      </div>
+    </aside>
+
     <main id="main-panel">
       <div id="view-channel" class="view">
         <div id="channel-empty" class="empty-state">
           <p>Selecione um grupo na barra lateral, ou crie um novo pra começar uma conversa.</p>
         </div>
         <div id="channel-content" class="hidden">
-          <div id="channel-header">
-            <span id="channel-header-name"></span>
-            <button type="button" id="rename-group-btn" class="btn-secondary">Renomear</button>
-            <button type="button" id="delete-group-btn" class="btn-secondary">Apagar</button>
+          <div class="chat-main">
+            <div id="channel-header">
+              <span id="channel-header-name"></span>
+              <button type="button" id="rename-group-btn" class="btn-secondary">Renomear</button>
+              <button type="button" id="delete-group-btn" class="btn-secondary">Apagar</button>
+              <button type="button" id="context-toggle-btn" class="mobile-only-toggle btn-secondary" aria-label="Abrir contexto" aria-expanded="false">i</button>
+            </div>
+            <div id="queue-bar">
+              <div id="queue-indicator"></div>
+              <button type="button" id="stop-queue-btn" class="btn-secondary hidden">Parar</button>
+            </div>
+            <div id="message-list"></div>
+            <form id="message-form">
+              <input id="message-input" placeholder="Mensagem (@nome para mencionar)" autocomplete="off" />
+              <label class="file-btn" for="image-input">Anexar imagem</label>
+              <input id="image-input" type="file" accept="image/*" class="visually-hidden" />
+              <span id="image-filename" class="file-name"></span>
+              <button type="submit" class="btn-primary">Enviar</button>
+            </form>
           </div>
-          <div id="conversation-tabs"></div>
-          <div id="channel-members">
-            <span id="member-list"></span>
-            <select id="add-member-select">
-              <option value="">+ adicionar agente</option>
-            </select>
-          </div>
-          <div id="queue-bar">
-            <div id="queue-indicator"></div>
-            <button type="button" id="stop-queue-btn" class="btn-secondary hidden">Parar</button>
-          </div>
-          <div id="message-list"></div>
-          <form id="message-form">
-            <input id="message-input" placeholder="Mensagem (@nome para mencionar)" autocomplete="off" />
-            <label class="file-btn" for="image-input">Anexar imagem</label>
-            <input id="image-input" type="file" accept="image/*" class="visually-hidden" />
-            <span id="image-filename" class="file-name"></span>
-            <button type="submit" class="btn-primary">Enviar</button>
-          </form>
+          <aside id="context-panel">
+            <div class="col-body">
+              <div class="col-header">
+                <span>Contexto</span>
+              </div>
+              <div class="context-block">
+                <div class="context-block-title">Contexto da conversa</div>
+                <div id="context-conversation-info"></div>
+              </div>
+              <div class="context-block">
+                <div class="context-block-title">Membros</div>
+                <span id="member-list"></span>
+                <select id="add-member-select">
+                  <option value="">+ adicionar agente</option>
+                </select>
+              </div>
+              <div class="context-block">
+                <div class="context-block-title">Ferramentas ativas</div>
+                <div class="tool-badge">🌐 Busca na Web</div>
+              </div>
+            </div>
+            <button type="button" id="context-collapse-btn" class="col-handle" aria-label="Recolher contexto" aria-expanded="true">›</button>
+          </aside>
         </div>
       </div>
       <div id="view-agents" class="view hidden">
@@ -101,6 +135,21 @@
       </div>
     </main>
   </div>
+
+  <div id="group-form-backdrop" class="modal-backdrop hidden">
+    <div id="group-form-modal" class="modal">
+      <h3 id="group-form-title">Novo grupo</h3>
+      <form id="group-form">
+        <input id="group-form-name" placeholder="Nome do grupo" required />
+        <div id="group-icon-grid"></div>
+        <div class="modal-actions">
+          <button type="button" id="group-form-cancel" class="btn-secondary">Cancelar</button>
+          <button type="submit" class="btn-primary">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>
