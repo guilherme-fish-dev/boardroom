@@ -54,6 +54,29 @@ possivelmente passar a lista de nomes dos outros membros do grupo (pra o
 modelo saber quem existe e pode ser mencionado, já que hoje ele não tem
 essa lista explícita em lugar nenhum do prompt).
 
+## 3. Mensagem órfã se um agente for apagado durante um job `processing`
+
+**Problema:** `queue_worker.process_next_job` marca o job como `processing`,
+comita, e só depois faz a chamada (potencialmente lenta) ao modelo. Se
+`DELETE /api/agents/{id}` for chamado nesse intervalo (numa outra conexão/
+request), a cascata do FK apaga a linha de `queue_jobs` na hora, mas o
+worker não sabe disso — ele termina o job normalmente e insere a mensagem
+final com `sender_id` apontando pro agente que não existe mais (permitido
+porque `messages.sender_id` não tem FK, de propósito). O agente também já
+não aparece mais em `state.agents` no frontend nesse ponto, então a
+mensagem renderiza com o nome genérico "agente" em vez do nome real.
+
+**Comportamento esperado:** não é uma corrupção de dado nem falha de
+sistema — é só uma mensagem exibida com atribuição genérica em vez do
+nome do agente apagado. Janela de tempo estreita (só afeta um agente
+sendo apagado no exato momento em que um job dele já está em
+processamento), dado o modelo de fila sequencial (um agente por vez).
+
+**Onde mexer, se decidirmos tratar:** ou aceitar como está (comportamento
+já gracioso o suficiente), ou fazer `delete_agent` checar se existe um
+`queue_jobs` com `status = 'processing'` pra esse agente antes de apagar,
+e recusar com 409 nesse caso raro.
+
 ## Observação
 
 Essas duas melhorias se relacionam: a primeira garante ORDEM correta
