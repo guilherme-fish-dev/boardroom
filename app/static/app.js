@@ -311,9 +311,18 @@ async function loadModels() {
 async function loadSettings() {
   const settings = await api("/api/settings");
   document.getElementById("setting-base-url").value = settings.llama_swap_base_url;
-  document.getElementById("setting-vision-model").value = settings.default_vision_model;
   document.getElementById("setting-max-pending").value = settings.max_pending_per_group;
-  document.getElementById("setting-assistant-model").value = settings.assistant_model;
+
+  await populateModelSelect(
+    document.getElementById("setting-vision-model"),
+    settings.default_vision_model,
+    { allowEmpty: true, emptyLabel: "nenhum (não configurado)" }
+  );
+  await populateModelSelect(
+    document.getElementById("setting-assistant-model"),
+    settings.assistant_model,
+    { allowEmpty: true, emptyLabel: "nenhum (não configurado)" }
+  );
 }
 
 document.getElementById("sidebar-toggle").onclick = () => {
