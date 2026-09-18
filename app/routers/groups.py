@@ -44,8 +44,10 @@ def create_group(group: GroupIn) -> GroupOut:
             cur = conn.execute("INSERT INTO groups (name) VALUES (?)", (group.name,))
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="group name already exists")
+        group_id = cur.lastrowid
+        conn.execute("INSERT INTO conversations (group_id, name) VALUES (?, 'Geral')", (group_id,))
         conn.commit()
-        row = conn.execute("SELECT * FROM groups WHERE id = ?", (cur.lastrowid,)).fetchone()
+        row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
     finally:
         conn.close()
     return GroupOut(id=row["id"], name=row["name"], created_at=row["created_at"])

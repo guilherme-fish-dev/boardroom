@@ -91,6 +91,15 @@ def test_update_group_returns_404_for_unknown_id(db):
     assert resp.status_code == 404
 
 
+def test_create_group_creates_default_conversation(db):
+    client = make_client(db)
+    group = client.post("/api/groups", json={"name": "investidores"}).json()
+
+    resp = client.get(f"/api/groups/{group['id']}/conversations")
+    assert resp.status_code == 200
+    assert [c["name"] for c in resp.json()] == ["Geral"]
+
+
 def test_delete_group_removes_it(db):
     client = make_client(db)
     group = client.post("/api/groups", json={"name": "investidores"}).json()
@@ -113,14 +122,15 @@ def test_delete_group_cascades_members_messages_and_jobs(db):
     agent = _create_agent(client)
     group = client.post("/api/groups", json={"name": "investidores"}).json()
     client.post(f"/api/groups/{group['id']}/members", json={"agent_id": agent["id"]})
-    client.post(f"/api/groups/{group['id']}/messages", json={"content": "oi"})
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+    client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "oi"})
 
     conn = get_connection()
     try:
         conn.execute(
-            "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
             "VALUES (?, ?, 'agent_turn', 1, '{}')",
-            (group["id"], agent["id"]),
+            (conversation["id"], agent["id"]),
         )
         conn.commit()
     finally:
@@ -134,14 +144,18 @@ def test_delete_group_cascades_members_messages_and_jobs(db):
         members = conn.execute(
             "SELECT * FROM group_members WHERE group_id = ?", (group["id"],)
         ).fetchall()
+        conversations = conn.execute(
+            "SELECT * FROM conversations WHERE group_id = ?", (group["id"],)
+        ).fetchall()
         messages = conn.execute(
-            "SELECT * FROM messages WHERE group_id = ?", (group["id"],)
+            "SELECT * FROM messages WHERE conversation_id = ?", (conversation["id"],)
         ).fetchall()
         jobs = conn.execute(
-            "SELECT * FROM queue_jobs WHERE group_id = ?", (group["id"],)
+            "SELECT * FROM queue_jobs WHERE conversation_id = ?", (conversation["id"],)
         ).fetchall()
     finally:
         conn.close()
     assert members == []
+    assert conversations == []
     assert messages == []
     assert jobs == []
