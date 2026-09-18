@@ -84,3 +84,8 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def get_setting(conn: sqlite3.Connection, key: str) -> str:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else ""
