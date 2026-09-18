@@ -95,3 +95,35 @@ def remove_member(group_id: int, agent_id: int) -> Response:
     finally:
         conn.close()
     return Response(status_code=204)
+
+
+@router.put("/{group_id}", response_model=GroupOut)
+def update_group(group_id: int, group: GroupIn) -> GroupOut:
+    conn = get_connection()
+    try:
+        try:
+            cur = conn.execute(
+                "UPDATE groups SET name = ? WHERE id = ?", (group.name, group_id)
+            )
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=409, detail="group name already exists")
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="group not found")
+        conn.commit()
+        row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+    finally:
+        conn.close()
+    return GroupOut(id=row["id"], name=row["name"], created_at=row["created_at"])
+
+
+@router.delete("/{group_id}", status_code=204)
+def delete_group(group_id: int) -> Response:
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="group not found")
+        conn.commit()
+    finally:
+        conn.close()
+    return Response(status_code=204)
