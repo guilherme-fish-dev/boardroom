@@ -116,10 +116,14 @@ function renderConversationTabs() {
     const closeBtn = document.createElement("span");
     closeBtn.className = "conversation-tab-delete";
     closeBtn.textContent = "×";
+    // Not a nested <button> (invalid HTML inside the tab's own <button>) — tabindex + keydown
+    // keep it keyboard-reachable and activatable like a real button.
+    closeBtn.tabIndex = 0;
+    closeBtn.setAttribute("role", "button");
     closeBtn.setAttribute("aria-label", `Apagar conversa ${conversation.name}`);
-    closeBtn.onclick = async (e) => {
+    const deleteConversation = async (e) => {
       e.stopPropagation();
-      if (!confirm(`Apagar a conversa "${conversation.name}"?`)) return;
+      if (!confirm(`Apagar a conversa "${conversation.name}"? As mensagens dela serão perdidas permanentemente.`)) return;
       const remaining = await api(
         `/api/groups/${state.activeGroupId}/conversations/${conversation.id}`,
         { method: "DELETE" }
@@ -129,6 +133,13 @@ function renderConversationTabs() {
         await selectConversation(remaining[0].id);
       } else {
         renderConversationTabs();
+      }
+    };
+    closeBtn.onclick = deleteConversation;
+    closeBtn.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        deleteConversation(e);
       }
     };
     tab.appendChild(closeBtn);
