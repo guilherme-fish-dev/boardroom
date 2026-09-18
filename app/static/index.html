@@ -2,50 +2,67 @@
 <html lang="pt-br">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Boardroom</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div id="app">
+    <button id="sidebar-toggle" type="button" aria-label="Alternar menu" aria-expanded="false">☰</button>
     <aside id="sidebar">
       <h1>Boardroom</h1>
       <nav>
-        <button id="nav-agents">Agentes</button>
-        <button id="nav-settings">Configurações</button>
+        <button id="nav-agents" type="button">Agentes</button>
+        <button id="nav-settings" type="button">Configurações</button>
       </nav>
-      <h2>Grupos</h2>
-      <ul id="group-list"></ul>
-      <form id="new-group-form">
-        <input id="new-group-name" placeholder="Novo grupo" required />
-        <button type="submit">Criar</button>
-      </form>
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Grupos</div>
+        <ul id="group-list"></ul>
+        <form id="new-group-form" class="inline-form">
+          <input id="new-group-name" placeholder="Novo grupo" required />
+          <button type="submit" class="btn-primary">Criar</button>
+        </form>
+      </div>
     </aside>
     <main id="main-panel">
       <div id="view-channel" class="view">
-        <div id="channel-header"></div>
-        <div id="channel-members">
-          <span id="member-list"></span>
-          <select id="add-member-select">
-            <option value="">+ adicionar agente</option>
-          </select>
+        <div id="channel-empty" class="empty-state">
+          <p>Selecione um grupo na barra lateral, ou crie um novo pra começar uma conversa.</p>
         </div>
-        <div id="queue-indicator"></div>
-        <div id="message-list"></div>
-        <form id="message-form">
-          <input id="message-input" placeholder="Mensagem (@nome para mencionar)" autocomplete="off" />
-          <input id="image-input" type="file" accept="image/*" />
-          <button type="submit">Enviar</button>
-        </form>
+        <div id="channel-content" class="hidden">
+          <div id="channel-header"></div>
+          <div id="channel-members">
+            <span id="member-list"></span>
+            <select id="add-member-select">
+              <option value="">+ adicionar agente</option>
+            </select>
+          </div>
+          <div id="queue-indicator"></div>
+          <div id="message-list"></div>
+          <form id="message-form">
+            <input id="message-input" placeholder="Mensagem (@nome para mencionar)" autocomplete="off" />
+            <label class="file-btn" for="image-input">Anexar imagem</label>
+            <input id="image-input" type="file" accept="image/*" class="visually-hidden" />
+            <span id="image-filename" class="file-name"></span>
+            <button type="submit" class="btn-primary">Enviar</button>
+          </form>
+        </div>
       </div>
       <div id="view-agents" class="view hidden">
         <h2>Agentes</h2>
         <ul id="agent-list"></ul>
         <form id="agent-form">
-          <input id="agent-name" placeholder="Nome (sem espaços)" required />
-          <textarea id="agent-persona" placeholder="Persona / system prompt" required></textarea>
-          <select id="agent-model" required></select>
+          <label>Nome (sem espaços)
+            <input id="agent-name" placeholder="ex.: investidor-conservador" required />
+          </label>
+          <label>Persona / system prompt
+            <textarea id="agent-persona" placeholder="Descreva como esse agente deve pensar e responder" required></textarea>
+          </label>
+          <label>Modelo (llama-swap)
+            <select id="agent-model" required></select>
+          </label>
           <label class="checkbox-label"><input id="agent-vision" type="checkbox" /> Capaz de visão</label>
-          <button type="submit">Salvar agente</button>
+          <button type="submit" class="btn-primary">Salvar agente</button>
         </form>
       </div>
       <div id="view-settings" class="view hidden">
@@ -60,7 +77,7 @@
           <label>Limite de jobs por grupo
             <input id="setting-max-pending" type="number" min="1" required />
           </label>
-          <button type="submit">Salvar</button>
+          <button type="submit" class="btn-primary">Salvar</button>
         </form>
       </div>
     </main>

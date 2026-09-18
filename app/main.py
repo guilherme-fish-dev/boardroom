@@ -6,12 +6,25 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from app.db import init_db
 from app.queue_worker import process_next_job
 from app.routers import agents, groups, messages, models, settings
 
 logger = logging.getLogger(__name__)
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Force revalidation on every request instead of letting browsers cache
+    HTML/CSS/JS indefinitely, which otherwise hides frontend edits behind a
+    stale cache during local development."""
+
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
 
 POLL_INTERVAL_SECONDS = 1.0
 
@@ -46,11 +59,11 @@ def create_app() -> FastAPI:
             await app.state.worker_task
 
     static_dir = Path(__file__).parent / "static"
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=static_dir), name="static")
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+        return FileResponse(static_dir / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
 

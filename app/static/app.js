@@ -1,11 +1,26 @@
 const state = {
   groups: [],
   activeGroupId: null,
+  activeView: "channel",
   agents: [],
   members: [],
   lastMessageId: 0,
   pollTimer: null,
 };
+
+const AGENT_HUES = [200, 280, 340, 130, 20, 245, 165, 305];
+
+function hashHue(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  return AGENT_HUES[hash % AGENT_HUES.length];
+}
+
+function agentColor(name) {
+  return `oklch(0.72 0.13 ${hashHue(name)})`;
+}
 
 async function api(path, options = {}) {
   const resp = await fetch(path, {
@@ -18,19 +33,42 @@ async function api(path, options = {}) {
 }
 
 function showView(name) {
+  state.activeView = name;
   for (const view of document.querySelectorAll(".view")) {
     view.classList.toggle("hidden", view.id !== `view-${name}`);
   }
+  document.getElementById("nav-agents").classList.toggle("active", name === "agents");
+  document.getElementById("nav-settings").classList.toggle("active", name === "settings");
+  if (name !== "channel") {
+    for (const li of document.querySelectorAll("#group-list li")) {
+      li.classList.remove("active");
+    }
+  }
+  closeSidebarOnMobile();
+}
+
+function closeSidebarOnMobile() {
+  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("sidebar-toggle").setAttribute("aria-expanded", "false");
 }
 
 async function loadGroups() {
   state.groups = await api("/api/groups");
   const list = document.getElementById("group-list");
   list.innerHTML = "";
+
+  if (state.groups.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty-hint";
+    li.textContent = "Nenhum grupo ainda";
+    list.appendChild(li);
+    return;
+  }
+
   for (const group of state.groups) {
     const li = document.createElement("li");
     li.textContent = group.name;
-    li.className = group.id === state.activeGroupId ? "active" : "";
+    li.className = state.activeView === "channel" && group.id === state.activeGroupId ? "active" : "";
     li.onclick = () => selectGroup(group.id);
     list.appendChild(li);
   }
@@ -42,6 +80,8 @@ async function selectGroup(groupId) {
   document.getElementById("message-list").innerHTML = "";
   const group = state.groups.find((g) => g.id === groupId);
   document.getElementById("channel-header").textContent = group ? `# ${group.name}` : "";
+  document.getElementById("channel-empty").classList.add("hidden");
+  document.getElementById("channel-content").classList.remove("hidden");
   showView("channel");
   await loadGroups();
   await loadMembers(groupId);
@@ -62,12 +102,17 @@ function renderMembers(groupId) {
   for (const member of state.members) {
     const badge = document.createElement("span");
     badge.className = "member-badge";
+    const dot = document.createElement("span");
+    dot.className = "member-dot";
+    dot.style.background = agentColor(member.name);
+    badge.appendChild(dot);
     const name = document.createElement("span");
     name.textContent = member.name;
     badge.appendChild(name);
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.textContent = "×";
+    removeBtn.setAttribute("aria-label", `Remover ${member.name} do grupo`);
     removeBtn.onclick = async () => {
       await api(`/api/groups/${groupId}/members/${member.id}`, { method: "DELETE" });
       await loadMembers(groupId);
@@ -102,15 +147,62 @@ function renderMembers(groupId) {
 }
 
 function renderMessage(message) {
-  const div = document.createElement("div");
-  div.className = `message ${message.sender_type}`;
-  div.textContent = message.content;
+  const row = document.createElement("div");
+  row.className = `message-row ${message.sender_type}`;
+
+  const bubble = document.createElement("div");
+  bubble.className = "message-bubble";
+  bubble.textContent = message.content;
+
+  if (message.sender_type === "agent") {
+    const agent = state.agents.find((a) => a.id === message.sender_id);
+    const name = agent ? agent.name : "agente";
+    const color = agentColor(name);
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.style.background = color;
+    avatar.textContent = name.slice(0, 1).toUpperCase();
+    row.appendChild(avatar);
+
+    const col = document.createElement("div");
+    col.className = "message-col";
+    const label = document.createElement("div");
+    label.className = "message-sender";
+    label.textContent = name;
+    label.style.color = color;
+    col.appendChild(label);
+    col.appendChild(bubble);
+    row.appendChild(col);
+  } else {
+    row.appendChild(bubble);
+  }
+
   if (message.image_path) {
     const img = document.createElement("img");
     img.src = `/api/groups/${message.group_id}/messages/${message.id}/image`;
-    div.appendChild(img);
+    img.alt = "Imagem enviada no chat";
+    bubble.appendChild(img);
   }
-  document.getElementById("message-list").appendChild(div);
+
+  document.getElementById("message-list").appendChild(row);
+}
+
+function updateMessageListEmptyState() {
+  const list = document.getElementById("message-list");
+  const hasMessages = list.querySelector(".message-row") !== null;
+  let placeholder = document.getElementById("message-list-empty");
+  if (!hasMessages) {
+    if (!placeholder) {
+      placeholder = document.createElement("div");
+      placeholder.id = "message-list-empty";
+      placeholder.className = "empty-state empty-state-inline";
+      placeholder.textContent = "Nenhuma mensagem ainda. Escreva algo e mencione @nome-do-agente pra começar.";
+      list.appendChild(placeholder);
+    }
+  } else if (placeholder) {
+    placeholder.remove();
+  }
 }
 
 async function pollMessages() {
@@ -122,6 +214,7 @@ async function pollMessages() {
     renderMessage(message);
     state.lastMessageId = message.id;
   }
+  updateMessageListEmptyState();
   if (messages.length > 0) {
     document.getElementById("message-list").scrollTop = 1e9;
   }
@@ -136,9 +229,24 @@ async function loadAgents() {
   state.agents = await api("/api/agents");
   const list = document.getElementById("agent-list");
   list.innerHTML = "";
+
+  if (state.agents.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty-hint";
+    li.textContent = "Nenhum agente ainda — crie o primeiro abaixo.";
+    list.appendChild(li);
+    return;
+  }
+
   for (const agent of state.agents) {
     const li = document.createElement("li");
-    li.textContent = `${agent.name} (${agent.model_name}${agent.vision_capable ? ", visão" : ""})`;
+    const dot = document.createElement("span");
+    dot.className = "agent-avatar-dot";
+    dot.style.background = agentColor(agent.name);
+    li.appendChild(dot);
+    const label = document.createElement("span");
+    label.textContent = `${agent.name} (${agent.model_name}${agent.vision_capable ? ", visão" : ""})`;
+    li.appendChild(label);
     list.appendChild(li);
   }
 }
@@ -183,6 +291,13 @@ async function loadSettings() {
   document.getElementById("setting-vision-model").value = settings.default_vision_model;
   document.getElementById("setting-max-pending").value = settings.max_pending_per_group;
 }
+
+document.getElementById("sidebar-toggle").onclick = () => {
+  const sidebar = document.getElementById("sidebar");
+  const opening = !sidebar.classList.contains("open");
+  sidebar.classList.toggle("open", opening);
+  document.getElementById("sidebar-toggle").setAttribute("aria-expanded", String(opening));
+};
 
 document.getElementById("nav-agents").onclick = async () => {
   showView("agents");
@@ -230,6 +345,11 @@ document.getElementById("settings-form").onsubmit = async (e) => {
   });
 };
 
+document.getElementById("image-input").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  document.getElementById("image-filename").textContent = file ? file.name : "";
+});
+
 document.getElementById("message-form").onsubmit = async (e) => {
   e.preventDefault();
   if (!state.activeGroupId) return;
@@ -242,6 +362,7 @@ document.getElementById("message-form").onsubmit = async (e) => {
     form.append("image", imageInput.files[0]);
     await api(`/api/groups/${state.activeGroupId}/messages/image`, { method: "POST", body: form });
     imageInput.value = "";
+    document.getElementById("image-filename").textContent = "";
   } else {
     await api(`/api/groups/${state.activeGroupId}/messages`, {
       method: "POST",
