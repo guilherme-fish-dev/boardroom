@@ -313,6 +313,9 @@ async function loadSettings() {
   document.getElementById("setting-base-url").value = settings.llama_swap_base_url;
   document.getElementById("setting-max-pending").value = settings.max_pending_per_group;
 
+  // Sem onError: ao contrário do formulário de agente, falha ao buscar modelos
+  // aqui não deve travar o botão "Salvar" de Configurações (o usuário pode estar
+  // justamente tentando corrigir a URL do llama-swap neste mesmo formulário).
   await populateModelSelect(
     document.getElementById("setting-vision-model"),
     settings.default_vision_model,
