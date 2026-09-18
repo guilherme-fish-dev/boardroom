@@ -60,27 +60,59 @@ body {
   font-size: 16px;
 }
 
-#sidebar {
-  width: 240px;
+.mobile-only-toggle { display: none; }
+
+/* Mecânica de colapso genérica para as 3 colunas laterais (grupos, conversas,
+   contexto): cada uma tem um "handle" (a faixa estreita com a setinha) que fica
+   sempre visível, e um `.col-body` que existe ou não conforme `.collapsed`. */
+#groups-col, #conversations-col, #context-panel {
   flex: 0 0 auto;
   background: var(--bg-elevated);
-  border-right: 1px solid var(--border);
+  display: flex;
+  transition: width 200ms ease;
+  overflow: hidden;
+}
+#groups-col { width: 240px; border-right: 1px solid var(--border); }
+#conversations-col { width: 260px; border-right: 1px solid var(--border); }
+#context-panel { width: 260px; border-left: 1px solid var(--border); flex-direction: row-reverse; }
+
+#groups-col.collapsed, #conversations-col.collapsed, #context-panel.collapsed { width: 32px; }
+.collapsed .col-body { display: none; }
+
+.col-handle {
+  flex: 0 0 auto;
+  width: 32px;
+  background: transparent;
+  border: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: 14px;
+  align-self: stretch;
+}
+.col-handle:hover { background: var(--surface); color: var(--ink); }
+
+#groups-col .col-body, #conversations-col .col-body, #context-panel .col-body {
+  flex: 1;
+  min-width: 0;
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
+  overflow-y: auto;
 }
 
-#sidebar h1 {
+#groups-col h1 {
   font-size: 16px;
   font-weight: 700;
   margin: 4px 4px 0;
   letter-spacing: -0.01em;
 }
 
-#sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+.col-header { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-faint); }
 
-#sidebar nav button {
+#groups-col nav { display: flex; flex-direction: column; gap: 2px; }
+
+#groups-col nav button {
   background: transparent;
   color: var(--ink-muted);
   border: none;
@@ -92,8 +124,8 @@ body {
   font-weight: 500;
   transition: background-color 150ms ease, color 150ms ease;
 }
-#sidebar nav button:hover { background: var(--surface); color: var(--ink); }
-#sidebar nav button.active { background: var(--surface); color: var(--ink); }
+#groups-col nav button:hover { background: var(--surface); color: var(--ink); }
+#groups-col nav button.active { background: var(--surface); color: var(--ink); }
 
 .sidebar-section {
   display: flex;
@@ -126,6 +158,9 @@ body {
 #group-list li.empty-hint { color: var(--ink-faint); font-style: italic; cursor: default; }
 #group-list li.empty-hint:hover { background: transparent; }
 
+#group-search { margin-bottom: 4px; }
+.group-icon { margin-right: 6px; }
+
 #main-panel { flex: 1; display: flex; flex-direction: column; padding: 20px 24px; overflow: hidden; min-width: 0; }
 
 .hidden { display: none !important; }
@@ -145,21 +180,13 @@ body {
 .empty-state p { max-width: 42ch; margin: 0; }
 .empty-state-inline { flex: 0 0 auto; padding: 24px 12px; margin: auto; max-width: 42ch; }
 
-#channel-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#channel-content { display: flex; flex-direction: row; flex: 1; min-height: 0; gap: 20px; }
+.chat-main { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 
 #channel-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 
 #channel-header-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; }
 
-#channel-members {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 0 0 12px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
 #member-list { display: inline-flex; gap: 8px; flex-wrap: wrap; }
 
 .member-badge {
@@ -376,20 +403,32 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 
 @media (max-width: 760px) {
   #sidebar-toggle { display: block; }
+  .mobile-only-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  .col-handle { display: none; }
   #app { position: relative; }
-  #sidebar {
+
+  #groups-col, #conversations-col, #context-panel {
     position: fixed;
-    inset: 0 auto 0 0;
+    top: 0;
+    bottom: 0;
+    width: 260px;
     z-index: 15;
-    transform: translateX(-100%);
     transition: transform 200ms ease;
     box-shadow: 2px 0 16px rgba(0, 0, 0, 0.4);
   }
-  #sidebar.open { transform: translateX(0); }
-  #sidebar { padding-top: 60px; }
+  #groups-col, #conversations-col { left: 0; transform: translateX(-100%); }
+  #context-panel { right: 0; left: auto; transform: translateX(100%); flex-direction: row; }
+  #groups-col.open, #conversations-col.open, #context-panel.open { transform: translateX(0); }
+  /* No mobile, .collapsed (regra de desktop) não deve zerar a largura — a visibilidade
+     aqui é só .open/fechada por transform. */
+  #groups-col.collapsed, #conversations-col.collapsed, #context-panel.collapsed { width: 260px; }
+  .collapsed .col-body { display: flex; }
+
+  #groups-col { padding-top: 60px; }
   #main-panel { padding: 56px 16px 16px; }
   .message-row { max-width: 88%; }
   #agent-form, #settings-form { max-width: none; }
+  #channel-content { flex-direction: column; }
 }
 
 .persona-assist { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
@@ -409,52 +448,3 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 
 .agent-form-actions { display: flex; gap: 8px; align-items: center; }
 
-#conversation-tabs {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding-bottom: 10px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.conversation-tab {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--ink-muted);
-  padding: 6px 8px 6px 12px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease;
-}
-.conversation-tab:hover { background: var(--surface-hover); color: var(--ink); }
-.conversation-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-
-.conversation-tab-rename,
-.conversation-tab-delete {
-  color: var(--ink-faint);
-  font-size: 14px;
-  line-height: 1;
-  transition: color 150ms ease;
-}
-.conversation-tab.active .conversation-tab-rename,
-.conversation-tab.active .conversation-tab-delete { color: var(--accent-ink); opacity: 0.7; }
-.conversation-tab-rename:hover { color: var(--ink); }
-.conversation-tab-delete:hover { color: var(--danger); }
-
-#new-conversation-btn {
-  background: transparent;
-  border: 1px dashed var(--border-strong);
-  color: var(--ink-faint);
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-}
-#new-conversation-btn:hover { background: var(--surface); color: var(--ink); }
