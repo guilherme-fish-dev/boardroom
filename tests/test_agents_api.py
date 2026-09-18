@@ -213,13 +213,14 @@ def test_delete_agent_cascades_group_membership_and_jobs(db):
     ).json()
     group = client.post("/api/groups", json={"name": "investidores"}).json()
     client.post(f"/api/groups/{group['id']}/members", json={"agent_id": agent["id"]})
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
 
     conn = get_connection()
     try:
         conn.execute(
-            "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
             "VALUES (?, ?, 'agent_turn', 1, '{}')",
-            (group["id"], agent["id"]),
+            (conversation["id"], agent["id"]),
         )
         conn.commit()
     finally:
