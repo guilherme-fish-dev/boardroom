@@ -1,6 +1,8 @@
 const state = {
   groups: [],
   activeGroupId: null,
+  conversations: [],
+  activeConversationId: null,
   activeView: "channel",
   agents: [],
   members: [],
@@ -77,8 +79,6 @@ async function loadGroups() {
 
 async function selectGroup(groupId) {
   state.activeGroupId = groupId;
-  state.lastMessageId = 0;
-  document.getElementById("message-list").innerHTML = "";
   const group = state.groups.find((g) => g.id === groupId);
   document.getElementById("channel-header-name").textContent = group ? `# ${group.name}` : "";
   document.getElementById("channel-empty").classList.add("hidden");
@@ -86,6 +86,78 @@ async function selectGroup(groupId) {
   showView("channel");
   await loadGroups();
   await loadMembers(groupId);
+  await loadConversations(groupId);
+}
+
+async function loadConversations(groupId) {
+  state.conversations = await api(`/api/groups/${groupId}/conversations`);
+  const stillActive = state.conversations.some((c) => c.id === state.activeConversationId);
+  if (stillActive) {
+    renderConversationTabs();
+  } else {
+    await selectConversation(state.conversations[0].id);
+  }
+}
+
+function renderConversationTabs() {
+  const bar = document.getElementById("conversation-tabs");
+  bar.innerHTML = "";
+
+  for (const conversation of state.conversations) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "conversation-tab" + (conversation.id === state.activeConversationId ? " active" : "");
+    tab.onclick = () => selectConversation(conversation.id);
+
+    const label = document.createElement("span");
+    label.textContent = conversation.name;
+    tab.appendChild(label);
+
+    const closeBtn = document.createElement("span");
+    closeBtn.className = "conversation-tab-delete";
+    closeBtn.textContent = "×";
+    closeBtn.setAttribute("aria-label", `Apagar conversa ${conversation.name}`);
+    closeBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Apagar a conversa "${conversation.name}"?`)) return;
+      const remaining = await api(
+        `/api/groups/${state.activeGroupId}/conversations/${conversation.id}`,
+        { method: "DELETE" }
+      );
+      state.conversations = remaining;
+      if (state.activeConversationId === conversation.id) {
+        await selectConversation(remaining[0].id);
+      } else {
+        renderConversationTabs();
+      }
+    };
+    tab.appendChild(closeBtn);
+    bar.appendChild(tab);
+  }
+
+  const newBtn = document.createElement("button");
+  newBtn.type = "button";
+  newBtn.id = "new-conversation-btn";
+  newBtn.textContent = "+";
+  newBtn.setAttribute("aria-label", "Nova conversa");
+  newBtn.onclick = async () => {
+    const name = prompt("Nome da nova conversa:");
+    if (!name || !name.trim()) return;
+    const conversation = await api(`/api/groups/${state.activeGroupId}/conversations`, {
+      method: "POST",
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    state.conversations.push(conversation);
+    await selectConversation(conversation.id);
+  };
+  bar.appendChild(newBtn);
+}
+
+async function selectConversation(conversationId) {
+  state.activeConversationId = conversationId;
+  state.lastMessageId = 0;
+  document.getElementById("message-list").innerHTML = "";
+  renderConversationTabs();
   await pollMessages();
 }
 
@@ -181,7 +253,7 @@ function renderMessage(message) {
 
   if (message.image_path) {
     const img = document.createElement("img");
-    img.src = `/api/groups/${message.group_id}/messages/${message.id}/image`;
+    img.src = `/api/conversations/${message.conversation_id}/messages/${message.id}/image`;
     img.alt = "Imagem enviada no chat";
     bubble.appendChild(img);
   }
@@ -207,9 +279,9 @@ function updateMessageListEmptyState() {
 }
 
 async function pollMessages() {
-  if (!state.activeGroupId) return;
+  if (!state.activeConversationId) return;
   const messages = await api(
-    `/api/groups/${state.activeGroupId}/messages?since_id=${state.lastMessageId}`
+    `/api/conversations/${state.activeConversationId}/messages?since_id=${state.lastMessageId}`
   );
   for (const message of messages) {
     renderMessage(message);
@@ -434,6 +506,8 @@ document.getElementById("delete-group-btn").onclick = async () => {
   if (!confirm(`Apagar o grupo "${name}"? Todo o histórico de mensagens será perdido permanentemente.`)) return;
   await api(`/api/groups/${state.activeGroupId}`, { method: "DELETE" });
   state.activeGroupId = null;
+  state.activeConversationId = null;
+  state.conversations = [];
   document.getElementById("channel-content").classList.add("hidden");
   document.getElementById("channel-empty").classList.remove("hidden");
   await loadGroups();
@@ -491,7 +565,7 @@ document.getElementById("image-input").addEventListener("change", (e) => {
 
 document.getElementById("message-form").onsubmit = async (e) => {
   e.preventDefault();
-  if (!state.activeGroupId) return;
+  if (!state.activeConversationId) return;
   const textInput = document.getElementById("message-input");
   const imageInput = document.getElementById("image-input");
 
@@ -499,11 +573,11 @@ document.getElementById("message-form").onsubmit = async (e) => {
     const form = new FormData();
     form.append("content", textInput.value);
     form.append("image", imageInput.files[0]);
-    await api(`/api/groups/${state.activeGroupId}/messages/image`, { method: "POST", body: form });
+    await api(`/api/conversations/${state.activeConversationId}/messages/image`, { method: "POST", body: form });
     imageInput.value = "";
     document.getElementById("image-filename").textContent = "";
   } else {
-    await api(`/api/groups/${state.activeGroupId}/messages`, {
+    await api(`/api/conversations/${state.activeConversationId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: textInput.value }),
     });

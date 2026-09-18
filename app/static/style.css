@@ -377,3 +377,50 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 .field-error { font-size: 12px; color: var(--danger); }
 
 .agent-form-actions { display: flex; gap: 8px; align-items: center; }
+
+#conversation-tabs {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.conversation-tab {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink-muted);
+  padding: 6px 8px 6px 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.conversation-tab:hover { background: var(--surface-hover); color: var(--ink); }
+.conversation-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+
+.conversation-tab-delete {
+  color: var(--ink-faint);
+  font-size: 14px;
+  line-height: 1;
+  transition: color 150ms ease;
+}
+.conversation-tab.active .conversation-tab-delete { color: var(--accent-ink); opacity: 0.7; }
+.conversation-tab-delete:hover { color: var(--danger); }
+
+#new-conversation-btn {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--ink-faint);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+#new-conversation-btn:hover { background: var(--surface); color: var(--ink); }
