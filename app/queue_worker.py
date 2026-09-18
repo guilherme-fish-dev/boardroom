@@ -46,16 +46,16 @@ MAX_SEARCHES_PER_TURN = 3
 
 def _build_history(
     conn: sqlite3.Connection,
-    group_id: int,
+    conversation_id: int,
     agent_persona: str,
     *,
     exclude_image_descriptions: bool = False,
 ) -> list[dict]:
-    query = "SELECT sender_type, sender_id, content FROM messages WHERE group_id = ?"
+    query = "SELECT sender_type, sender_id, content FROM messages WHERE conversation_id = ?"
     if exclude_image_descriptions:
         query += " AND (hidden = 0 OR IFNULL(hidden_kind, '') != 'image_description')"
     query += " ORDER BY id"
-    rows = conn.execute(query, (group_id,)).fetchall()
+    rows = conn.execute(query, (conversation_id,)).fetchall()
     messages = [{"role": "system", "content": agent_persona + WEB_SEARCH_INSTRUCTIONS}]
     for row in rows:
         role = "assistant" if row["sender_type"] == "agent" else "user"
@@ -79,18 +79,18 @@ def _process_describe_image(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     )
 
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) "
+        "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) "
         "VALUES (?, 'system', ?, 1, 'image_description')",
-        (job["group_id"], description),
+        (job["conversation_id"], description),
     )
     conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
 
 
-def _find_recent_image(conn: sqlite3.Connection, group_id: int) -> str | None:
+def _find_recent_image(conn: sqlite3.Connection, conversation_id: int) -> str | None:
     row = conn.execute(
-        "SELECT image_path FROM messages WHERE group_id = ? AND image_path IS NOT NULL "
+        "SELECT image_path FROM messages WHERE conversation_id = ? AND image_path IS NOT NULL "
         "ORDER BY id DESC LIMIT 1",
-        (group_id,),
+        (conversation_id,),
     ).fetchone()
     return row["image_path"] if row else None
 
@@ -101,14 +101,14 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
 
     image_base64 = None
     if agent["vision_capable"]:
-        image_path = _find_recent_image(conn, job["group_id"])
+        image_path = _find_recent_image(conn, job["conversation_id"])
         if image_path:
             with open(image_path, "rb") as f:
                 image_base64 = base64.b64encode(f.read()).decode("ascii")
 
     history = _build_history(
         conn,
-        job["group_id"],
+        job["conversation_id"],
         agent["persona_prompt"],
         exclude_image_descriptions=image_base64 is not None,
     )
@@ -130,9 +130,9 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
             results = f"Erro ao buscar: {exc}"
 
         conn.execute(
-            "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) "
+            "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) "
             "VALUES (?, 'system', ?, 1, 'search_result')",
-            (job["group_id"], f'Busca por "{query}":\n{results}'),
+            (job["conversation_id"], f'Busca por "{query}":\n{results}'),
         )
 
         history.append({"role": "assistant", "content": reply})
@@ -155,18 +155,19 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
             reply = "Não consegui concluir a busca a tempo, mas posso ajudar com o que já sei — pode perguntar de novo."
 
     cur = conn.execute(
-        "INSERT INTO messages (group_id, sender_type, sender_id, content) "
+        "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
         "VALUES (?, 'agent', ?, ?)",
-        (job["group_id"], agent["id"], reply),
+        (job["conversation_id"], agent["id"], reply),
     )
     agent_message_id = cur.lastrowid
 
-    # Count active jobs (this job is still 'processing' at this point) to decide
-    # whether the group's queue has room for a follow-up job from this reply.
+    # Count active jobs (this job is still 'processing' at this point) to decide whether the
+    # conversation's queue has room for a follow-up job from this reply. Antes da introdução de
+    # múltiplas conversas por grupo, esse limite era por grupo; agora é por conversa individual.
     max_pending = int(_get_setting(conn, "max_pending_per_group") or "20")
     active_count = conn.execute(
-        "SELECT COUNT(*) AS c FROM queue_jobs WHERE group_id = ? AND status IN ('pending','processing')",
-        (job["group_id"],),
+        "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? AND status IN ('pending','processing')",
+        (job["conversation_id"],),
     ).fetchone()["c"]
 
     conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
@@ -174,12 +175,12 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     if active_count >= max_pending:
         if extract_mentions(reply):
             conn.execute(
-                "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'system', ?)",
-                (job["group_id"], "Limite de fila atingido neste grupo — novas menções foram ignoradas até a fila esvaziar."),
+                "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'system', ?)",
+                (job["conversation_id"], "Limite de fila atingido nesta conversa — novas menções foram ignoradas até a fila esvaziar."),
             )
         return
 
-    enqueue_mentions(conn, job["group_id"], agent_message_id, reply)
+    enqueue_mentions(conn, job["conversation_id"], agent_message_id, reply)
 
 
 def process_next_job() -> bool:
@@ -204,8 +205,8 @@ def process_next_job() -> bool:
             conn.rollback()  # discard any partial, uncommitted work (e.g. the agent reply insert) before recording the error
             conn.execute("UPDATE queue_jobs SET status = 'error' WHERE id = ?", (job["id"],))
             conn.execute(
-                "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'system', ?)",
-                (job["group_id"], f"Erro ao processar job {job['id']}: {exc}"),
+                "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'system', ?)",
+                (job["conversation_id"], f"Erro ao processar job {job['id']}: {exc}"),
             )
             conn.commit()
         return True

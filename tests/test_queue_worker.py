@@ -17,6 +17,11 @@ def _create_group(conn, name="investidores"):
     return cur.lastrowid
 
 
+def _create_conversation(conn, group_id, name="Geral"):
+    cur = conn.execute("INSERT INTO conversations (group_id, name) VALUES (?, ?)", (group_id, name))
+    return cur.lastrowid
+
+
 def _add_member(conn, group_id, agent_id):
     conn.execute("INSERT INTO group_members (group_id, agent_id) VALUES (?, ?)", (group_id, agent_id))
 
@@ -28,16 +33,17 @@ def test_process_next_job_picks_highest_priority_first(db, monkeypatch, tmp_path
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, NULL, 'describe_image', 0, ?)",
-        (group_id, json.dumps({"image_path": str(image_path), "message_id": 1})),
+        (conversation_id, json.dumps({"image_path": str(image_path), "message_id": 1})),
     )
     conn.commit()
     conn.close()
@@ -58,15 +64,16 @@ def test_process_next_job_agent_turn_posts_reply_and_marks_done(db, monkeypatch)
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -95,16 +102,17 @@ def test_process_next_job_reply_with_new_mention_enqueues_follow_up(db, monkeypa
     bob_id = _create_agent(conn, name="bob")
     alice_id = _create_agent(conn, name="alice")
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, bob_id)
     _add_member(conn, group_id, alice_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, bob_id),
+        (conversation_id, bob_id),
     )
     conn.commit()
     conn.close()
@@ -130,15 +138,16 @@ def test_process_next_job_rolls_back_partial_work_on_error(db, monkeypatch):
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -177,15 +186,16 @@ def test_process_next_job_agent_turn_passes_image_to_vision_capable_agent(db, mo
     conn = get_connection()
     agent_id = _create_agent(conn, vision_capable=1)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
-        (group_id, str(image_path)),
+        "INSERT INTO messages (conversation_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (conversation_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -209,15 +219,16 @@ def test_process_next_job_agent_turn_no_image_for_non_vision_agent(db, monkeypat
     conn = get_connection()
     agent_id = _create_agent(conn, vision_capable=0)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
-        (group_id, str(image_path)),
+        "INSERT INTO messages (conversation_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (conversation_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -241,19 +252,20 @@ def test_process_next_job_vision_agent_history_excludes_hidden_description(db, m
     conn = get_connection()
     agent_id = _create_agent(conn, vision_capable=1)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
-        (group_id, str(image_path)),
+        "INSERT INTO messages (conversation_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (conversation_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) VALUES (?, 'system', ?, 1, 'image_description')",
-        (group_id, "descrição oculta gerada pelo describe_image"),
+        "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) VALUES (?, 'system', ?, 1, 'image_description')",
+        (conversation_id, "descrição oculta gerada pelo describe_image"),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -279,19 +291,20 @@ def test_process_next_job_vision_agent_history_includes_hidden_message_without_k
     conn = get_connection()
     agent_id = _create_agent(conn, vision_capable=1)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
-        (group_id, str(image_path)),
+        "INSERT INTO messages (conversation_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (conversation_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
-        (group_id, "mensagem oculta sem hidden_kind"),
+        "INSERT INTO messages (conversation_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+        (conversation_id, "mensagem oculta sem hidden_kind"),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -316,19 +329,20 @@ def test_process_next_job_non_vision_agent_history_includes_hidden_description(d
     conn = get_connection()
     agent_id = _create_agent(conn, vision_capable=0)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
-        (group_id, str(image_path)),
+        "INSERT INTO messages (conversation_id, sender_type, content, image_path) VALUES (?, 'user', '@bob olha isso', ?)",
+        (conversation_id, str(image_path)),
     )
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) VALUES (?, 'system', ?, 1, 'image_description')",
-        (group_id, "descrição oculta gerada pelo describe_image"),
+        "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) VALUES (?, 'system', ?, 1, 'image_description')",
+        (conversation_id, "descrição oculta gerada pelo describe_image"),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -354,16 +368,17 @@ def test_process_next_job_respects_loop_limit(db, monkeypatch):
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_id,),
     )
     for _ in range(20):
         conn.execute(
-            "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
             "VALUES (?, ?, 'agent_turn', 1, '{}')",
-            (group_id, agent_id),
+            (conversation_id, agent_id),
         )
     conn.commit()
     conn.close()
@@ -392,15 +407,16 @@ def test_process_next_job_agent_searches_once_then_answers(db, monkeypatch):
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que dia é hoje?')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', 'que dia é hoje?')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -433,15 +449,16 @@ def test_process_next_job_agent_hits_search_limit_and_is_forced_to_answer(db, mo
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'pesquise sem parar')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', 'pesquise sem parar')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -480,15 +497,16 @@ def test_process_next_job_search_failure_does_not_crash_the_job(db, monkeypatch)
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'oi')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', 'oi')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -521,15 +539,16 @@ def test_process_next_job_forced_answer_still_searching_falls_back_to_generic_me
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'pesquise sem parar')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', 'pesquise sem parar')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -566,15 +585,16 @@ def test_process_next_job_detects_buscar_even_with_prose_around_it(db, monkeypat
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que dia é hoje?')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', 'que dia é hoje?')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -609,15 +629,16 @@ def test_process_next_job_does_not_treat_buscar_mention_mid_sentence_as_search_c
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'o que é BUSCAR?')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', 'o que é BUSCAR?')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
@@ -655,15 +676,16 @@ def test_process_next_job_buscar_same_line_preamble_leaks_as_text_not_search(db,
     conn = get_connection()
     agent_id = _create_agent(conn)
     group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
     _add_member(conn, group_id, agent_id)
     conn.execute(
-        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que tempo faz em SP?')",
-        (group_id,),
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', 'que tempo faz em SP?')",
+        (conversation_id,),
     )
     conn.execute(
-        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
         "VALUES (?, ?, 'agent_turn', 1, '{}')",
-        (group_id, agent_id),
+        (conversation_id, agent_id),
     )
     conn.commit()
     conn.close()
