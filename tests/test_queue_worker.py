@@ -642,3 +642,49 @@ def test_process_next_job_does_not_treat_buscar_mention_mid_sentence_as_search_c
 
     assert len(agent_messages) == 1
     assert agent_messages[0]["content"] == reply_text
+
+
+def test_process_next_job_buscar_same_line_preamble_leaks_as_text_not_search(db, monkeypatch):
+    """Documents the accepted trade-off of the line-anchored SEARCH_PATTERN: a preamble on the
+    SAME line as `BUSCAR:` (e.g. "Vou pesquisar. BUSCAR: x") is deliberately NOT detected as a
+    search command, so it leaks through as plain text instead of triggering a search. This is
+    the accepted risk (see the comment above SEARCH_PATTERN in app/queue_worker.py) — a smaller
+    cost than the false positive of matching "BUSCAR:" anywhere in the response, which fires
+    unwanted network calls. Do not "fix" this by switching back to an unanchored `.search()`.
+    """
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que tempo faz em SP?')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    reply_text = "Vou pesquisar. BUSCAR: clima em SP"
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: reply_text)
+
+    def _fail_if_called(query, **kwargs):
+        raise AssertionError("web_search não deveria ser chamado quando o preâmbulo está na mesma linha")
+
+    monkeypatch.setattr("app.queue_worker.web_search", _fail_if_called)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == reply_text
