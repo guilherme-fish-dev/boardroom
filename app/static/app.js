@@ -347,6 +347,7 @@ generateBtn.onclick = async () => {
   generateBtn.disabled = true;
   const originalLabel = generateBtn.textContent;
   generateBtn.textContent = "Gerando...";
+  personaTextarea.readOnly = true;
   try {
     const data = await api("/api/agents/generate-persona", {
       method: "POST",
@@ -359,6 +360,7 @@ generateBtn.onclick = async () => {
   } catch (err) {
     generateError.textContent = err.message;
   } finally {
+    personaTextarea.readOnly = false;
     generateBtn.textContent = originalLabel;
     generateBtn.disabled = personaTextarea.value.trim().length === 0;
   }
