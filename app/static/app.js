@@ -17,6 +17,43 @@ const state = {
 
 const AGENT_HUES = [200, 280, 340, 130, 20, 245, 165, 305];
 
+const GROUP_ICON_OPTIONS = ["💬", "📊", "📁", "🧑", "📚", "🎨", "💰", "⚙️", "🧪", "🚀", "📈", "🗑️"];
+
+function renderGroupIconGrid(selectedIcon) {
+  const grid = document.getElementById("group-icon-grid");
+  grid.innerHTML = "";
+  for (const icon of GROUP_ICON_OPTIONS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "icon-grid-option" + (icon === selectedIcon ? " selected" : "");
+    btn.textContent = icon;
+    btn.setAttribute("aria-label", `Usar ícone ${icon}`);
+    btn.onclick = () => {
+      grid.dataset.selected = icon;
+      for (const other of grid.querySelectorAll(".icon-grid-option")) {
+        other.classList.toggle("selected", other === btn);
+      }
+    };
+    grid.appendChild(btn);
+  }
+  grid.dataset.selected = selectedIcon;
+}
+
+function openGroupForm({ groupId = null, name = "", icon = GROUP_ICON_OPTIONS[0] } = {}) {
+  state.editingGroupId = groupId;
+  document.getElementById("group-form-title").textContent = groupId ? "Renomear grupo" : "Novo grupo";
+  document.getElementById("group-form-name").value = name;
+  renderGroupIconGrid(icon);
+  document.getElementById("group-form-backdrop").classList.remove("hidden");
+  document.getElementById("group-form-name").focus();
+}
+
+function closeGroupForm() {
+  document.getElementById("group-form-backdrop").classList.add("hidden");
+  document.getElementById("group-form").reset();
+  state.editingGroupId = null;
+}
+
 function hashHue(name) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
@@ -686,21 +723,35 @@ document.getElementById("nav-settings").onclick = async () => {
   await loadSettings();
 };
 
-// TODO(Task 6): #new-group-form/#new-group-name were replaced by the
-// #group-form modal in index.html but the modal's JS wiring isn't in place
-// yet. Guarded (instead of removed) so this dead listener doesn't throw at
-// load time and abort the rest of this script's top-level init — remove this
-// guard once Task 6 wires the modal.
-const newGroupForm = document.getElementById("new-group-form");
-if (newGroupForm) {
-  newGroupForm.onsubmit = async (e) => {
-    e.preventDefault();
-    const input = document.getElementById("new-group-name");
-    await api("/api/groups", { method: "POST", body: JSON.stringify({ name: input.value }) });
-    input.value = "";
-    await loadGroups();
-  };
-}
+document.getElementById("new-group-btn").onclick = () => openGroupForm();
+
+document.getElementById("group-form-cancel").onclick = () => closeGroupForm();
+
+document.getElementById("group-form-backdrop").addEventListener("click", (e) => {
+  if (e.target.id === "group-form-backdrop") closeGroupForm();
+});
+
+document.getElementById("group-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("group-form-name").value.trim();
+  if (!name) return;
+  const icon = document.getElementById("group-icon-grid").dataset.selected || GROUP_ICON_OPTIONS[0];
+
+  if (state.editingGroupId) {
+    await api(`/api/groups/${state.editingGroupId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, icon }),
+    });
+  } else {
+    await api("/api/groups", { method: "POST", body: JSON.stringify({ name, icon }) });
+  }
+  closeGroupForm();
+  await loadGroups();
+  if (state.activeGroupId) {
+    const updated = state.groups.find((g) => g.id === state.activeGroupId);
+    document.getElementById("channel-header-name").textContent = updated ? `# ${updated.name}` : "";
+  }
+};
 
 document.getElementById("agent-form").onsubmit = async (e) => {
   e.preventDefault();
@@ -738,19 +789,11 @@ document.getElementById("delete-agent-btn").onclick = async () => {
   await loadAgents();
 };
 
-document.getElementById("rename-group-btn").onclick = async () => {
+document.getElementById("rename-group-btn").onclick = () => {
   if (!state.activeGroupId) return;
   const group = state.groups.find((g) => g.id === state.activeGroupId);
-  const currentName = group ? group.name : "";
-  const newName = prompt("Novo nome do grupo:", currentName);
-  if (!newName || !newName.trim() || newName.trim() === currentName) return;
-  await api(`/api/groups/${state.activeGroupId}`, {
-    method: "PUT",
-    body: JSON.stringify({ name: newName.trim() }),
-  });
-  await loadGroups();
-  const updated = state.groups.find((g) => g.id === state.activeGroupId);
-  document.getElementById("channel-header-name").textContent = updated ? `# ${updated.name}` : "";
+  if (!group) return;
+  openGroupForm({ groupId: group.id, name: group.name, icon: group.icon });
 };
 
 document.getElementById("stop-queue-btn").onclick = async () => {
