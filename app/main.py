@@ -10,7 +10,7 @@ from starlette.types import Scope
 
 from app.db import init_db
 from app.queue_worker import process_next_job
-from app.routers import agents, groups, messages, models, settings
+from app.routers import agents, conversations, groups, messages, models, settings
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Boardroom")
     app.include_router(agents.router)
     app.include_router(groups.router)
+    app.include_router(conversations.router)
     app.include_router(settings.router)
     app.include_router(messages.router)
     app.include_router(models.router)
