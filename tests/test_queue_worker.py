@@ -386,3 +386,132 @@ def test_process_next_job_respects_loop_limit(db, monkeypatch):
         conn.close()
     assert pending_count == 19
     assert warning is not None
+
+
+def test_process_next_job_agent_searches_once_then_answers(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que dia é hoje?')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(["BUSCAR: data de hoje", "Hoje é 18 de setembro de 2026."])
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+    monkeypatch.setattr("app.queue_worker.web_search", lambda query, **kwargs: "Hoje é 18/09/2026.")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+        hidden_messages = conn.execute(
+            "SELECT * FROM messages WHERE hidden = 1 AND hidden_kind = 'search_result'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Hoje é 18 de setembro de 2026."
+    assert len(hidden_messages) == 1
+    assert "data de hoje" in hidden_messages[0]["content"]
+    assert "18/09/2026" in hidden_messages[0]["content"]
+
+
+def test_process_next_job_agent_hits_search_limit_and_is_forced_to_answer(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'pesquise sem parar')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(
+        [
+            "BUSCAR: um",
+            "BUSCAR: dois",
+            "BUSCAR: tres",
+            "BUSCAR: quatro",
+            "Não encontrei nada definitivo, mas aqui está o que sei.",
+        ]
+    )
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+    monkeypatch.setattr("app.queue_worker.web_search", lambda query, **kwargs: f"resultado de {query}")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+        hidden_messages = conn.execute(
+            "SELECT * FROM messages WHERE hidden = 1 AND hidden_kind = 'search_result'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Não encontrei nada definitivo, mas aqui está o que sei."
+    assert len(hidden_messages) == 3
+
+
+def test_process_next_job_search_failure_does_not_crash_the_job(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'oi')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(["BUSCAR: algo", "Sem internet, mas posso ajudar de outra forma."])
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+
+    def _raise(query, **kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("app.queue_worker.web_search", _raise)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM queue_jobs").fetchone()
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert job["status"] == "done"
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Sem internet, mas posso ajudar de outra forma."

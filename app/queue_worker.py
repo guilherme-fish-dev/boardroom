@@ -3,12 +3,14 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import sqlite3
 
 from app.db import get_connection
 from app.llm_client import chat_completion
 from app.mentions import extract_mentions
 from app.routers.messages import enqueue_mentions
+from app.web_search import web_search
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,9 @@ WEB_SEARCH_INSTRUCTIONS = (
     "Você vai receber os resultados da busca e poderá responder normalmente em seguida, "
     "ou buscar de novo (no máximo 3 vezes) se ainda precisar de mais informação."
 )
+
+SEARCH_PATTERN = re.compile(r"^\s*BUSCAR:\s*(.+?)\s*$", re.IGNORECASE | re.DOTALL)
+MAX_SEARCHES_PER_TURN = 3
 
 
 def _build_history(
@@ -108,6 +113,38 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         messages=history,
         image_base64=image_base64,
     )
+
+    searches_done = 0
+    match = SEARCH_PATTERN.match(reply)
+    while match and searches_done < MAX_SEARCHES_PER_TURN:
+        query = match.group(1).strip()
+        try:
+            results = web_search(query)
+        except Exception as exc:
+            results = f"Erro ao buscar: {exc}"
+
+        conn.execute(
+            "INSERT INTO messages (group_id, sender_type, content, hidden, hidden_kind) "
+            "VALUES (?, 'system', ?, 1, 'search_result')",
+            (job["group_id"], f'Busca por "{query}":\n{results}'),
+        )
+
+        history.append({"role": "assistant", "content": reply})
+        history.append({"role": "user", "content": f'Resultados da busca por "{query}":\n{results}'})
+        reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
+        searches_done += 1
+        match = SEARCH_PATTERN.match(reply)
+
+    if match:
+        history.append({"role": "assistant", "content": reply})
+        history.append(
+            {
+                "role": "user",
+                "content": "Você atingiu o limite de buscas para esta resposta. Responda com base "
+                "no que você já sabe, sem buscar de novo.",
+            }
+        )
+        reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
 
     cur = conn.execute(
         "INSERT INTO messages (group_id, sender_type, sender_id, content) "
