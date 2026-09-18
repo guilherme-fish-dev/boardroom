@@ -186,7 +186,9 @@ body {
 }
 .member-badge button:hover { color: var(--danger); }
 
-#queue-indicator { font-size: 12px; color: var(--ink-faint); min-height: 16px; margin-bottom: 4px; }
+#queue-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 16px; margin-bottom: 4px; }
+#queue-indicator { font-size: 12px; color: var(--ink-faint); }
+#stop-queue-btn { padding: 3px 10px; font-size: 12px; flex: 0 0 auto; }
 
 #message-list {
   flex: 1;
@@ -239,6 +241,35 @@ body {
   padding: 4px 8px;
 }
 .message-bubble img { max-width: 260px; display: block; margin-top: 8px; border-radius: var(--radius-sm); }
+
+.message-bubble p { margin: 0 0 8px; }
+.message-bubble p:last-child { margin-bottom: 0; }
+.message-bubble p.msg-heading { font-weight: 700; margin-top: 4px; }
+.message-bubble ul, .message-bubble ol { margin: 0 0 8px; padding-left: 20px; }
+.message-bubble ul:last-child, .message-bubble ol:last-child { margin-bottom: 0; }
+.message-bubble li { margin-bottom: 2px; }
+.message-bubble code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.message-row.user .message-bubble code { background: rgba(0, 0, 0, 0.12); }
+
+.search-chip-row { align-self: center; max-width: 80%; }
+.search-chip {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--ink-faint);
+  font-size: 12px;
+  font-style: italic;
+  padding: 3px 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
 
 @media (prefers-reduced-motion: no-preference) {
   .message-row { animation: message-in 220ms cubic-bezier(0.16, 1, 0.3, 1); }
@@ -404,13 +435,16 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 .conversation-tab:hover { background: var(--surface-hover); color: var(--ink); }
 .conversation-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 
+.conversation-tab-rename,
 .conversation-tab-delete {
   color: var(--ink-faint);
   font-size: 14px;
   line-height: 1;
   transition: color 150ms ease;
 }
+.conversation-tab.active .conversation-tab-rename,
 .conversation-tab.active .conversation-tab-delete { color: var(--accent-ink); opacity: 0.7; }
+.conversation-tab-rename:hover { color: var(--ink); }
 .conversation-tab-delete:hover { color: var(--danger); }
 
 #new-conversation-btn {

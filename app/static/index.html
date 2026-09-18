@@ -42,7 +42,10 @@
               <option value="">+ adicionar agente</option>
             </select>
           </div>
-          <div id="queue-indicator"></div>
+          <div id="queue-bar">
+            <div id="queue-indicator"></div>
+            <button type="button" id="stop-queue-btn" class="btn-secondary hidden">Parar</button>
+          </div>
           <div id="message-list"></div>
           <form id="message-form">
             <input id="message-input" placeholder="Mensagem (@nome para mencionar)" autocomplete="off" />

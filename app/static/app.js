@@ -8,6 +8,8 @@ const state = {
   members: [],
   lastMessageId: 0,
   pollTimer: null,
+  pollGeneration: 0,
+  pollInFlight: false,
   editingAgentId: null,
 };
 
@@ -113,6 +115,33 @@ function renderConversationTabs() {
     label.textContent = conversation.name;
     tab.appendChild(label);
 
+    const renameBtn = document.createElement("span");
+    renameBtn.className = "conversation-tab-rename";
+    renameBtn.textContent = "✎";
+    renameBtn.tabIndex = 0;
+    renameBtn.setAttribute("role", "button");
+    renameBtn.setAttribute("aria-label", `Renomear conversa ${conversation.name}`);
+    const renameConversation = async (e) => {
+      e.stopPropagation();
+      const newName = prompt("Novo nome da conversa:", conversation.name);
+      if (!newName || !newName.trim() || newName.trim() === conversation.name) return;
+      const updated = await api(
+        `/api/groups/${state.activeGroupId}/conversations/${conversation.id}`,
+        { method: "PUT", body: JSON.stringify({ name: newName.trim() }) }
+      );
+      const target = state.conversations.find((c) => c.id === conversation.id);
+      if (target) target.name = updated.name;
+      renderConversationTabs();
+    };
+    renameBtn.onclick = renameConversation;
+    renameBtn.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        renameConversation(e);
+      }
+    };
+    tab.appendChild(renameBtn);
+
     const closeBtn = document.createElement("span");
     closeBtn.className = "conversation-tab-delete";
     closeBtn.textContent = "×";
@@ -167,9 +196,18 @@ function renderConversationTabs() {
 async function selectConversation(conversationId) {
   state.activeConversationId = conversationId;
   state.lastMessageId = 0;
+  // Bump the generation and release any in-flight-poll lock held by the previous
+  // conversation, so a stale response from a poll started before the switch can't
+  // land on top of this one (see pollMessages' generation check) and a fresh poll
+  // for the new conversation isn't blocked by that stale in-flight request.
+  state.pollGeneration += 1;
+  state.pollInFlight = false;
   document.getElementById("message-list").innerHTML = "";
+  document.getElementById("queue-indicator").textContent = "";
+  document.getElementById("stop-queue-btn").classList.add("hidden");
   renderConversationTabs();
   await pollMessages();
+  await pollPendingStatus();
 }
 
 async function loadMembers(groupId) {
@@ -230,13 +268,102 @@ function renderMembers(groupId) {
   };
 }
 
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderInlineMarkdown(escapedText) {
+  // Runs on already-HTML-escaped text, so these substitutions only ever wrap the
+  // escaped text in tags we control — no way for message content to inject markup.
+  return escapedText
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+}
+
+// Minimal, dependency-free markdown: headings, bold/italic/code, and lists — enough to make
+// agent replies (which lean on **bold**, "## heading" and "- item" lists) readable without
+// pulling in a full markdown library for a static, no-build-step frontend.
+function formatMessageContent(content) {
+  const lines = escapeHtml(content).split("\n");
+  let html = "";
+  let listType = null;
+  const closeList = () => {
+    if (listType) {
+      html += `</${listType}>`;
+      listType = null;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    // Deliberately don't close an open list on a blank line: LLM-generated markdown
+    // commonly puts a blank line between numbered/bulleted items for readability, and
+    // closing (then reopening) the list there would reset <ol> numbering back to 1.
+    if (line === "") continue;
+
+    const heading = line.match(/^#{1,4}\s+(.*)$/);
+    if (heading) {
+      closeList();
+      html += `<p class="msg-heading">${renderInlineMarkdown(heading[1])}</p>`;
+      continue;
+    }
+
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    if (bullet) {
+      if (listType !== "ul") {
+        closeList();
+        html += "<ul>";
+        listType = "ul";
+      }
+      html += `<li>${renderInlineMarkdown(bullet[1])}</li>`;
+      continue;
+    }
+
+    const numbered = line.match(/^\d+[.)]\s+(.*)$/);
+    if (numbered) {
+      if (listType !== "ol") {
+        closeList();
+        html += "<ol>";
+        listType = "ol";
+      }
+      html += `<li>${renderInlineMarkdown(numbered[1])}</li>`;
+      continue;
+    }
+
+    closeList();
+    html += `<p>${renderInlineMarkdown(line)}</p>`;
+  }
+  closeList();
+  return html;
+}
+
+function renderSearchChip(message) {
+  const row = document.createElement("div");
+  row.className = "message-row search-chip-row";
+
+  const chip = document.createElement("div");
+  chip.className = "search-chip";
+  const firstLine = message.content.split("\n")[0] || "Pesquisou na internet";
+  chip.textContent = `🔍 ${firstLine}`;
+  chip.title = message.content;
+
+  row.appendChild(chip);
+  document.getElementById("message-list").appendChild(row);
+}
+
 function renderMessage(message) {
+  if (message.hidden_kind === "search_result") {
+    renderSearchChip(message);
+    return;
+  }
+
   const row = document.createElement("div");
   row.className = `message-row ${message.sender_type}`;
 
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";
-  bubble.textContent = message.content;
+  bubble.innerHTML = formatMessageContent(message.content);
 
   if (message.sender_type === "agent") {
     const agent = state.agents.find((a) => a.id === message.sender_id);
@@ -291,22 +418,73 @@ function updateMessageListEmptyState() {
 
 async function pollMessages() {
   if (!state.activeConversationId) return;
-  const messages = await api(
-    `/api/conversations/${state.activeConversationId}/messages?since_id=${state.lastMessageId}`
+  // Without this guard, the 2s polling timer and a conversation switch (or two
+  // overlapping timer ticks, if a fetch is slow) can both be in flight for the
+  // same conversation at once; both would fetch the same since_id and both would
+  // append the same messages, duplicating them in the DOM.
+  if (state.pollInFlight) return;
+  state.pollInFlight = true;
+  const generation = state.pollGeneration;
+  const conversationId = state.activeConversationId;
+  try {
+    const messages = await api(
+      `/api/conversations/${conversationId}/messages?since_id=${state.lastMessageId}`
+    );
+    // A newer selectConversation happened while this fetch was in flight — discard
+    // this stale response instead of rendering another conversation's messages here.
+    if (generation !== state.pollGeneration) return;
+    for (const message of messages) {
+      renderMessage(message);
+      state.lastMessageId = message.id;
+    }
+    updateMessageListEmptyState();
+    if (messages.length > 0) {
+      document.getElementById("message-list").scrollTop = 1e9;
+    }
+  } finally {
+    if (generation === state.pollGeneration) state.pollInFlight = false;
+  }
+}
+
+async function pollPendingStatus() {
+  if (!state.activeConversationId) return;
+  const conversationId = state.activeConversationId;
+  let pending;
+  try {
+    pending = await api(`/api/conversations/${conversationId}/messages/pending`);
+  } catch (err) {
+    console.error("Failed to load pending status:", err);
+    return;
+  }
+  // The active conversation changed while this request was in flight — the indicator
+  // for it has already been reset by selectConversation, so don't overwrite it here.
+  if (conversationId !== state.activeConversationId) return;
+  renderPendingIndicator(pending);
+}
+
+function renderPendingIndicator(pending) {
+  const el = document.getElementById("queue-indicator");
+  const stopBtn = document.getElementById("stop-queue-btn");
+  if (!pending || pending.length === 0) {
+    el.textContent = "";
+    stopBtn.classList.add("hidden");
+    return;
+  }
+  const labels = pending.map((job) =>
+    job.job_type === "describe_image"
+      ? "Analisando a imagem enviada…"
+      : `${job.agent_name || "agente"} está respondendo…`
   );
-  for (const message of messages) {
-    renderMessage(message);
-    state.lastMessageId = message.id;
-  }
-  updateMessageListEmptyState();
-  if (messages.length > 0) {
-    document.getElementById("message-list").scrollTop = 1e9;
-  }
+  el.textContent = [...new Set(labels)].join(" · ");
+  stopBtn.classList.remove("hidden");
 }
 
 function startPolling() {
   if (state.pollTimer) clearInterval(state.pollTimer);
-  state.pollTimer = setInterval(pollMessages, 2000);
+  state.pollTimer = setInterval(() => {
+    pollMessages();
+    pollPendingStatus();
+  }, 2000);
 }
 
 async function loadAgents() {
@@ -510,6 +688,22 @@ document.getElementById("rename-group-btn").onclick = async () => {
   document.getElementById("channel-header-name").textContent = updated ? `# ${updated.name}` : "";
 };
 
+document.getElementById("stop-queue-btn").onclick = async () => {
+  if (!state.activeGroupId || !state.activeConversationId) return;
+  const btn = document.getElementById("stop-queue-btn");
+  btn.disabled = true;
+  try {
+    await api(
+      `/api/groups/${state.activeGroupId}/conversations/${state.activeConversationId}/stop`,
+      { method: "POST" }
+    );
+    await pollMessages();
+    await pollPendingStatus();
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 document.getElementById("delete-group-btn").onclick = async () => {
   if (!state.activeGroupId) return;
   const group = state.groups.find((g) => g.id === state.activeGroupId);
@@ -519,6 +713,8 @@ document.getElementById("delete-group-btn").onclick = async () => {
   state.activeGroupId = null;
   state.activeConversationId = null;
   state.conversations = [];
+  document.getElementById("queue-indicator").textContent = "";
+  document.getElementById("stop-queue-btn").classList.add("hidden");
   document.getElementById("channel-content").classList.add("hidden");
   document.getElementById("channel-empty").classList.remove("hidden");
   await loadGroups();
@@ -595,6 +791,7 @@ document.getElementById("message-form").onsubmit = async (e) => {
   }
   textInput.value = "";
   await pollMessages();
+  await pollPendingStatus();
 };
 
 (async function init() {
