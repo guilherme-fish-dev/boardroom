@@ -6,6 +6,7 @@ const state = {
   members: [],
   lastMessageId: 0,
   pollTimer: null,
+  editingAgentId: null,
 };
 
 const AGENT_HUES = [200, 280, 340, 130, 20, 245, 165, 305];
@@ -247,8 +248,29 @@ async function loadAgents() {
     const label = document.createElement("span");
     label.textContent = `${agent.name} (${agent.model_name}${agent.vision_capable ? ", visão" : ""})`;
     li.appendChild(label);
+    li.onclick = () => startEditingAgent(agent);
     list.appendChild(li);
   }
+}
+
+function startEditingAgent(agent) {
+  document.getElementById("agent-name").value = agent.name;
+  document.getElementById("agent-persona").value = agent.persona_prompt;
+  document.getElementById("agent-vision").checked = agent.vision_capable;
+  loadModels(agent.model_name);
+  state.editingAgentId = agent.id;
+  document.getElementById("agent-submit-btn").textContent = "Atualizar agente";
+  document.getElementById("cancel-edit-agent-btn").classList.remove("hidden");
+  document.getElementById("delete-agent-btn").classList.remove("hidden");
+}
+
+function stopEditingAgent() {
+  document.getElementById("agent-form").reset();
+  state.editingAgentId = null;
+  document.getElementById("agent-submit-btn").textContent = "Salvar agente";
+  document.getElementById("cancel-edit-agent-btn").classList.add("hidden");
+  document.getElementById("delete-agent-btn").classList.add("hidden");
+  loadModels();
 }
 
 async function populateModelSelect(selectEl, currentValue, { allowEmpty, emptyLabel, onError } = {}) {
@@ -295,10 +317,10 @@ async function populateModelSelect(selectEl, currentValue, { allowEmpty, emptyLa
   }
 }
 
-async function loadModels() {
+async function loadModels(currentValue = "") {
   const modelSelect = document.getElementById("agent-model");
   const submitButton = document.querySelector("#agent-form button[type=submit]");
-  const ok = await populateModelSelect(modelSelect, "", {
+  const ok = await populateModelSelect(modelSelect, currentValue, {
     allowEmpty: true,
     emptyLabel: "selecione um modelo",
     onError: () => {
@@ -356,16 +378,37 @@ document.getElementById("new-group-form").onsubmit = async (e) => {
 
 document.getElementById("agent-form").onsubmit = async (e) => {
   e.preventDefault();
-  await api("/api/agents", {
-    method: "POST",
-    body: JSON.stringify({
-      name: document.getElementById("agent-name").value,
-      persona_prompt: document.getElementById("agent-persona").value,
-      model_name: document.getElementById("agent-model").value,
-      vision_capable: document.getElementById("agent-vision").checked,
-    }),
-  });
-  e.target.reset();
+  const payload = {
+    name: document.getElementById("agent-name").value,
+    persona_prompt: document.getElementById("agent-persona").value,
+    model_name: document.getElementById("agent-model").value,
+    vision_capable: document.getElementById("agent-vision").checked,
+  };
+  if (state.editingAgentId) {
+    await api(`/api/agents/${state.editingAgentId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  } else {
+    await api("/api/agents", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+  stopEditingAgent();
+  await loadAgents();
+};
+
+document.getElementById("cancel-edit-agent-btn").onclick = () => {
+  stopEditingAgent();
+};
+
+document.getElementById("delete-agent-btn").onclick = async () => {
+  if (!state.editingAgentId) return;
+  const name = document.getElementById("agent-name").value;
+  if (!confirm(`Apagar o agente "${name}"?`)) return;
+  await api(`/api/agents/${state.editingAgentId}`, { method: "DELETE" });
+  stopEditingAgent();
   await loadAgents();
 };
 
