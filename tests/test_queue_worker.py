@@ -403,6 +403,70 @@ def test_process_next_job_respects_loop_limit(db, monkeypatch):
     assert warning is not None
 
 
+def test_process_next_job_queue_limit_is_scoped_per_conversation(db, monkeypatch):
+    """max_pending_per_group is counted per CONVERSATION, not per group (see Task 5 of
+    docs/superpowers/plans/2026-09-18-multiple-conversations.md). Saturate conversation_a's
+    limit with 20 active jobs, then prove that conversation_b (same group, well under its own
+    limit) still gets its follow-up mention enqueued. Under the old per-group behavior the
+    group's total active count would already be 21 (20 from A + 1 from B), which is over the
+    limit of 20, so B's follow-up would NOT be enqueued.
+    """
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    conversation_a = _create_conversation(conn, group_id, name="Conversa A")
+    conversation_b = _create_conversation(conn, group_id, name="Conversa B")
+    _add_member(conn, group_id, agent_id)
+
+    # Saturate conversation_a's own queue limit (20 active jobs), with lower priority so they
+    # are not picked first by process_next_job().
+    for _ in range(20):
+        conn.execute(
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+            "VALUES (?, ?, 'agent_turn', 1, '{}')",
+            (conversation_a, agent_id),
+        )
+
+    # conversation_b has a single pending job (higher priority, i.e. lower number, so it is
+    # processed first and deterministically).
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_b,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 0, '{}')",
+        (conversation_b, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion", lambda **kwargs: "@bob de novo?"
+    )
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        pending_b = conn.execute(
+            "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? AND status = 'pending'",
+            (conversation_b,),
+        ).fetchone()["c"]
+        warning = conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND sender_type = 'system'",
+            (conversation_b,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    # A NEW follow-up job was enqueued for conversation_b because its own active count (1,
+    # well below the limit of 20) is what gets checked — conversation_a's 20 saturated jobs
+    # do not count against conversation_b's budget.
+    assert pending_b == 1
+    assert warning is None
+
+
 def test_process_next_job_agent_searches_once_then_answers(db, monkeypatch):
     conn = get_connection()
     agent_id = _create_agent(conn)
