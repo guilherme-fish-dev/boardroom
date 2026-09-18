@@ -74,6 +74,8 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+# Não é seguro contra chamadas concorrentes de init_db() (checagem + ALTER não é atômico) —
+# aceitável hoje porque o app roda em um único processo e init_db() só é chamado uma vez, no startup.
 def _ensure_hidden_kind_column(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
     if "hidden_kind" not in columns:
