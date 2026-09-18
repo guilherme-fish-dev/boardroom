@@ -158,18 +158,13 @@ def _ensure_conversations_table(conn: sqlite3.Connection) -> None:
     This migration is resumable rather than atomic: `ALTER TABLE ... RENAME TO` commits
     immediately in SQLite even inside an explicit transaction (verified empirically — it is
     not something an app-level BEGIN/COMMIT can prevent), so a process crash between any two
-    statements here cannot be rolled back. Every step is instead idempotent and re-derives
-    how far a previous (possibly interrupted) run got, so re-running `init_db()` after a crash
+    statements here cannot be rolled back. There is deliberately no top-level "is anything
+    pending?" short-circuit: `messages` and `queue_jobs` migrate independently and can be left
+    in different states by a crash (e.g. `messages` fully migrated while `queue_jobs` hasn't
+    even started), so every step below re-checks its own progress and runs unconditionally,
+    relying on each one being individually idempotent. Re-running `init_db()` after a crash
     always finishes the migration without losing or duplicating any row, regardless of which
     statement it died on."""
-    tables = _existing_tables(conn)
-    messages_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
-    migration_pending = (
-        "group_id" in messages_columns or "messages_old" in tables or "queue_jobs_old" in tables
-    )
-    if not migration_pending:
-        return
-
     # Idempotent: only backfills a 'Geral' conversation for a group that doesn't have one yet,
     # so re-running this after a crash never creates a duplicate.
     conn.execute(
