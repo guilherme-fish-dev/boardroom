@@ -77,7 +77,9 @@ body {
 #context-panel { width: 260px; border-left: 1px solid var(--border); flex-direction: row-reverse; }
 
 #groups-col.collapsed, #conversations-col.collapsed, #context-panel.collapsed { width: 32px; }
-.collapsed .col-body { display: none; }
+#groups-col.collapsed .col-body,
+#conversations-col.collapsed .col-body,
+#context-panel.collapsed .col-body { display: none; }
 
 .col-handle {
   flex: 0 0 auto;
@@ -422,7 +424,9 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
   /* No mobile, .collapsed (regra de desktop) não deve zerar a largura — a visibilidade
      aqui é só .open/fechada por transform. */
   #groups-col.collapsed, #conversations-col.collapsed, #context-panel.collapsed { width: 260px; }
-  .collapsed .col-body { display: flex; }
+  #groups-col.collapsed .col-body,
+  #conversations-col.collapsed .col-body,
+  #context-panel.collapsed .col-body { display: flex; }
 
   #groups-col { padding-top: 60px; }
   #main-panel { padding: 56px 16px 16px; }
