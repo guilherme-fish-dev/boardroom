@@ -52,6 +52,8 @@ def enqueue_mentions(conn: sqlite3.Connection, conversation_id: int, trigger_mes
         "SELECT group_id FROM conversations WHERE id = ?", (conversation_id,)
     ).fetchone()
     if conversation is None:
+        # Defensive only: callers (post_message, post_image_message, queue_worker) always
+        # pass a conversation_id they just confirmed exists.
         return
 
     placeholders = ",".join("?" for _ in names)
