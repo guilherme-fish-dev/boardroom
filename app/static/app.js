@@ -161,9 +161,22 @@ async function loadConversations(groupId) {
   const stillActive = state.conversations.some((c) => c.id === state.activeConversationId);
   if (stillActive) {
     renderConversationList();
+    renderConversationContext();
   } else {
     await selectConversation(state.conversations[0].id);
   }
+}
+
+function renderConversationContext() {
+  const el = document.getElementById("context-conversation-info");
+  const conversation = state.conversations.find((c) => c.id === state.activeConversationId);
+  if (!conversation) {
+    el.textContent = "";
+    return;
+  }
+  const created = new Date(conversation.created_at.replace(" ", "T") + "Z");
+  const formatted = created.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+  el.textContent = `${conversation.name} · criada em ${formatted}`;
 }
 
 function renderConversationList() {
@@ -257,6 +270,7 @@ async function selectConversation(conversationId) {
   document.getElementById("queue-indicator").textContent = "";
   document.getElementById("stop-queue-btn").classList.add("hidden");
   renderConversationList();
+  renderConversationContext();
   await pollMessages();
   await pollPendingStatus();
 }
