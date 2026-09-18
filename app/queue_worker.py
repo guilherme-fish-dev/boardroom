@@ -34,7 +34,13 @@ WEB_SEARCH_INSTRUCTIONS = (
     "ou buscar de novo (no máximo 3 vezes) se ainda precisar de mais informação."
 )
 
-SEARCH_PATTERN = re.compile(r"BUSCAR:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+# Ancorado ao início de linha (não à string inteira) pra pegar o padrão mesmo quando o
+# modelo escreve um preâmbulo numa linha separada antes de "BUSCAR: ...". Deliberadamente
+# NÃO detecta "BUSCAR:" no meio de uma frase (ex.: "minha resposta sobre BUSCAR: conceito") —
+# isso evitaria falso positivo (busca disparada por engano) às custas de eventualmente perder
+# um preâmbulo que fica na MESMA linha do comando (ex.: "Vou pesquisar. BUSCAR: x"), que nesse
+# caso vaza como texto normal — um risco menor que ativar uma busca indevida.
+SEARCH_PATTERN = re.compile(r"^\s*BUSCAR:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 MAX_SEARCHES_PER_TURN = 3
 
 

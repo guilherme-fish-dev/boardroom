@@ -579,7 +579,7 @@ def test_process_next_job_detects_buscar_even_with_prose_around_it(db, monkeypat
     conn.commit()
     conn.close()
 
-    replies = iter(["Vou pesquisar isso. BUSCAR: data de hoje", "Hoje é 18 de setembro de 2026."])
+    replies = iter(["Vou pesquisar isso.\nBUSCAR: data de hoje", "Hoje é 18 de setembro de 2026."])
     monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
 
     captured_queries = []
@@ -603,3 +603,42 @@ def test_process_next_job_detects_buscar_even_with_prose_around_it(db, monkeypat
     assert captured_queries == ["data de hoje"]
     assert len(agent_messages) == 1
     assert agent_messages[0]["content"] == "Hoje é 18 de setembro de 2026."
+
+
+def test_process_next_job_does_not_treat_buscar_mention_mid_sentence_as_search_command(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'o que é BUSCAR?')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    reply_text = "Aqui está minha resposta final sobre BUSCAR: como conceito de programação."
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: reply_text)
+
+    def _fail_if_called(query, **kwargs):
+        raise AssertionError("web_search não deveria ser chamado para uma menção no meio da frase")
+
+    monkeypatch.setattr("app.queue_worker.web_search", _fail_if_called)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == reply_text
