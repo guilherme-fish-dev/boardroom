@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.db import get_connection
 from app.main import create_app
 
 
@@ -172,3 +173,70 @@ def test_generate_persona_returns_502_on_failure(db, monkeypatch):
 
     assert resp.status_code == 502
     assert "connection refused" in resp.json()["detail"]
+
+
+def test_delete_agent_removes_it(db):
+    client = make_client(db)
+    agent = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    ).json()
+
+    resp = client.delete(f"/api/agents/{agent['id']}")
+    assert resp.status_code == 204
+
+    resp = client.get("/api/agents")
+    assert resp.json() == []
+
+
+def test_delete_agent_returns_404_for_unknown_id(db):
+    client = make_client(db)
+    resp = client.delete("/api/agents/9999")
+    assert resp.status_code == 404
+
+
+def test_delete_agent_cascades_group_membership_and_jobs(db):
+    client = make_client(db)
+    agent = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    ).json()
+    group = client.post("/api/groups", json={"name": "investidores"}).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": agent["id"]})
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+            "VALUES (?, ?, 'agent_turn', 1, '{}')",
+            (group["id"], agent["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = client.delete(f"/api/agents/{agent['id']}")
+    assert resp.status_code == 204
+
+    conn = get_connection()
+    try:
+        members = conn.execute(
+            "SELECT * FROM group_members WHERE agent_id = ?", (agent["id"],)
+        ).fetchall()
+        jobs = conn.execute(
+            "SELECT * FROM queue_jobs WHERE agent_id = ?", (agent["id"],)
+        ).fetchall()
+    finally:
+        conn.close()
+    assert members == []
+    assert jobs == []
