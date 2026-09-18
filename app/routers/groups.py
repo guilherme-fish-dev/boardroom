@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/groups", tags=["groups"])
 
 class GroupIn(BaseModel):
     name: str
+    icon: str = "💬"
 
 
 class GroupOut(GroupIn):
@@ -33,7 +34,7 @@ def list_groups() -> list[GroupOut]:
         rows = conn.execute("SELECT * FROM groups ORDER BY id").fetchall()
     finally:
         conn.close()
-    return [GroupOut(id=r["id"], name=r["name"], created_at=r["created_at"]) for r in rows]
+    return [GroupOut(id=r["id"], name=r["name"], icon=r["icon"], created_at=r["created_at"]) for r in rows]
 
 
 @router.post("", response_model=GroupOut, status_code=201)
@@ -41,7 +42,9 @@ def create_group(group: GroupIn) -> GroupOut:
     conn = get_connection()
     try:
         try:
-            cur = conn.execute("INSERT INTO groups (name) VALUES (?)", (group.name,))
+            cur = conn.execute(
+                "INSERT INTO groups (name, icon) VALUES (?, ?)", (group.name, group.icon)
+            )
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="group name already exists")
         group_id = cur.lastrowid
@@ -50,7 +53,7 @@ def create_group(group: GroupIn) -> GroupOut:
         row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
     finally:
         conn.close()
-    return GroupOut(id=row["id"], name=row["name"], created_at=row["created_at"])
+    return GroupOut(id=row["id"], name=row["name"], icon=row["icon"], created_at=row["created_at"])
 
 
 @router.get("/{group_id}/members", response_model=list[MemberOut])
@@ -105,7 +108,8 @@ def update_group(group_id: int, group: GroupIn) -> GroupOut:
     try:
         try:
             cur = conn.execute(
-                "UPDATE groups SET name = ? WHERE id = ?", (group.name, group_id)
+                "UPDATE groups SET name = ?, icon = ? WHERE id = ?",
+                (group.name, group.icon, group_id),
             )
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="group name already exists")
@@ -115,7 +119,7 @@ def update_group(group_id: int, group: GroupIn) -> GroupOut:
         row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
     finally:
         conn.close()
-    return GroupOut(id=row["id"], name=row["name"], created_at=row["created_at"])
+    return GroupOut(id=row["id"], name=row["name"], icon=row["icon"], created_at=row["created_at"])
 
 
 @router.delete("/{group_id}", status_code=204)

@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE TABLE IF NOT EXISTS groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
+    icon TEXT NOT NULL DEFAULT '💬',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -87,6 +88,12 @@ def _ensure_hidden_kind_column(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
     if "hidden_kind" not in columns:
         conn.execute("ALTER TABLE messages ADD COLUMN hidden_kind TEXT")
+
+
+def _ensure_group_icon_column(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(groups)")}
+    if "icon" not in columns:
+        conn.execute("ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT '💬'")
 
 
 def _existing_tables(conn: sqlite3.Connection) -> set[str]:
@@ -202,6 +209,7 @@ def init_db() -> None:
     try:
         conn.executescript(SCHEMA)
         _ensure_hidden_kind_column(conn)
+        _ensure_group_icon_column(conn)
         _ensure_conversations_table(conn)
         _recover_orphaned_processing_jobs(conn)
         for key, value in DEFAULT_SETTINGS.items():

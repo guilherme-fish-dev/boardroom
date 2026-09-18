@@ -11,9 +11,48 @@ const state = {
   pollGeneration: 0,
   pollInFlight: false,
   editingAgentId: null,
+  groupSearchTerm: "",
+  editingGroupId: null,
 };
 
 const AGENT_HUES = [200, 280, 340, 130, 20, 245, 165, 305];
+
+const GROUP_ICON_OPTIONS = ["💬", "📊", "📁", "🧑", "📚", "🎨", "💰", "⚙️", "🧪", "🚀", "📈", "🗑️"];
+
+function renderGroupIconGrid(selectedIcon) {
+  const grid = document.getElementById("group-icon-grid");
+  grid.innerHTML = "";
+  for (const icon of GROUP_ICON_OPTIONS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "icon-grid-option" + (icon === selectedIcon ? " selected" : "");
+    btn.textContent = icon;
+    btn.setAttribute("aria-label", `Usar ícone ${icon}`);
+    btn.onclick = () => {
+      grid.dataset.selected = icon;
+      for (const other of grid.querySelectorAll(".icon-grid-option")) {
+        other.classList.toggle("selected", other === btn);
+      }
+    };
+    grid.appendChild(btn);
+  }
+  grid.dataset.selected = selectedIcon;
+}
+
+function openGroupForm({ groupId = null, name = "", icon = GROUP_ICON_OPTIONS[0] } = {}) {
+  state.editingGroupId = groupId;
+  document.getElementById("group-form-title").textContent = groupId ? "Renomear grupo" : "Novo grupo";
+  document.getElementById("group-form-name").value = name;
+  renderGroupIconGrid(icon);
+  document.getElementById("group-form-backdrop").classList.remove("hidden");
+  document.getElementById("group-form-name").focus();
+}
+
+function closeGroupForm() {
+  document.getElementById("group-form-backdrop").classList.add("hidden");
+  document.getElementById("group-form").reset();
+  state.editingGroupId = null;
+}
 
 function hashHue(name) {
   let hash = 0;
@@ -53,14 +92,23 @@ function showView(name) {
 }
 
 function closeSidebarOnMobile() {
-  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("groups-col").classList.remove("open");
   document.getElementById("sidebar-toggle").setAttribute("aria-expanded", "false");
 }
 
 async function loadGroups() {
   state.groups = await api("/api/groups");
+  renderGroupList();
+}
+
+function renderGroupList() {
   const list = document.getElementById("group-list");
   list.innerHTML = "";
+
+  const term = state.groupSearchTerm.trim().toLowerCase();
+  const visible = term
+    ? state.groups.filter((g) => g.name.toLowerCase().includes(term))
+    : state.groups;
 
   if (state.groups.length === 0) {
     const li = document.createElement("li");
@@ -70,11 +118,28 @@ async function loadGroups() {
     return;
   }
 
-  for (const group of state.groups) {
+  if (visible.length === 0) {
     const li = document.createElement("li");
-    li.textContent = group.name;
+    li.className = "empty-hint";
+    li.textContent = "Nenhum grupo encontrado";
+    list.appendChild(li);
+    return;
+  }
+
+  for (const group of visible) {
+    const li = document.createElement("li");
     li.className = state.activeView === "channel" && group.id === state.activeGroupId ? "active" : "";
     li.onclick = () => selectGroup(group.id);
+
+    const icon = document.createElement("span");
+    icon.className = "group-icon";
+    icon.textContent = group.icon;
+    li.appendChild(icon);
+
+    const name = document.createElement("span");
+    name.textContent = group.name;
+    li.appendChild(name);
+
     list.appendChild(li);
   }
 }
@@ -95,28 +160,44 @@ async function loadConversations(groupId) {
   state.conversations = await api(`/api/groups/${groupId}/conversations`);
   const stillActive = state.conversations.some((c) => c.id === state.activeConversationId);
   if (stillActive) {
-    renderConversationTabs();
+    renderConversationList();
+    renderConversationContext();
   } else {
     await selectConversation(state.conversations[0].id);
   }
 }
 
-function renderConversationTabs() {
-  const bar = document.getElementById("conversation-tabs");
-  bar.innerHTML = "";
+function renderConversationContext() {
+  const el = document.getElementById("context-conversation-info");
+  const conversation = state.conversations.find((c) => c.id === state.activeConversationId);
+  if (!conversation) {
+    el.textContent = "";
+    return;
+  }
+  const created = new Date(conversation.created_at.replace(" ", "T") + "Z");
+  const formatted = created.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+  el.textContent = `${conversation.name} · criada em ${formatted}`;
+}
+
+function renderConversationList() {
+  const list = document.getElementById("conversation-list");
+  list.innerHTML = "";
 
   for (const conversation of state.conversations) {
-    const tab = document.createElement("button");
-    tab.type = "button";
-    tab.className = "conversation-tab" + (conversation.id === state.activeConversationId ? " active" : "");
-    tab.onclick = () => selectConversation(conversation.id);
+    const card = document.createElement("li");
+    card.className = "conversation-card" + (conversation.id === state.activeConversationId ? " active" : "");
+    card.onclick = () => selectConversation(conversation.id);
 
-    const label = document.createElement("span");
-    label.textContent = conversation.name;
-    tab.appendChild(label);
+    const name = document.createElement("span");
+    name.className = "conversation-card-name";
+    name.textContent = conversation.name;
+    card.appendChild(name);
+
+    const actions = document.createElement("span");
+    actions.className = "conversation-card-actions";
 
     const renameBtn = document.createElement("span");
-    renameBtn.className = "conversation-tab-rename";
+    renameBtn.className = "conversation-card-rename";
     renameBtn.textContent = "✎";
     renameBtn.tabIndex = 0;
     renameBtn.setAttribute("role", "button");
@@ -131,7 +212,7 @@ function renderConversationTabs() {
       );
       const target = state.conversations.find((c) => c.id === conversation.id);
       if (target) target.name = updated.name;
-      renderConversationTabs();
+      renderConversationList();
     };
     renameBtn.onclick = renameConversation;
     renameBtn.onkeydown = (e) => {
@@ -140,13 +221,11 @@ function renderConversationTabs() {
         renameConversation(e);
       }
     };
-    tab.appendChild(renameBtn);
+    actions.appendChild(renameBtn);
 
     const closeBtn = document.createElement("span");
-    closeBtn.className = "conversation-tab-delete";
+    closeBtn.className = "conversation-card-delete";
     closeBtn.textContent = "×";
-    // Not a nested <button> (invalid HTML inside the tab's own <button>) — tabindex + keydown
-    // keep it keyboard-reachable and activatable like a real button.
     closeBtn.tabIndex = 0;
     closeBtn.setAttribute("role", "button");
     closeBtn.setAttribute("aria-label", `Apagar conversa ${conversation.name}`);
@@ -161,7 +240,7 @@ function renderConversationTabs() {
       if (state.activeConversationId === conversation.id) {
         await selectConversation(remaining[0].id);
       } else {
-        renderConversationTabs();
+        renderConversationList();
       }
     };
     closeBtn.onclick = deleteConversation;
@@ -171,26 +250,11 @@ function renderConversationTabs() {
         deleteConversation(e);
       }
     };
-    tab.appendChild(closeBtn);
-    bar.appendChild(tab);
-  }
+    actions.appendChild(closeBtn);
 
-  const newBtn = document.createElement("button");
-  newBtn.type = "button";
-  newBtn.id = "new-conversation-btn";
-  newBtn.textContent = "+";
-  newBtn.setAttribute("aria-label", "Nova conversa");
-  newBtn.onclick = async () => {
-    const name = prompt("Nome da nova conversa:");
-    if (!name || !name.trim()) return;
-    const conversation = await api(`/api/groups/${state.activeGroupId}/conversations`, {
-      method: "POST",
-      body: JSON.stringify({ name: name.trim() }),
-    });
-    state.conversations.push(conversation);
-    await selectConversation(conversation.id);
-  };
-  bar.appendChild(newBtn);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
 }
 
 async function selectConversation(conversationId) {
@@ -205,7 +269,8 @@ async function selectConversation(conversationId) {
   document.getElementById("message-list").innerHTML = "";
   document.getElementById("queue-indicator").textContent = "";
   document.getElementById("stop-queue-btn").classList.add("hidden");
-  renderConversationTabs();
+  renderConversationList();
+  renderConversationContext();
   await pollMessages();
   await pollPendingStatus();
 }
@@ -611,12 +676,41 @@ async function loadSettings() {
   );
 }
 
+function wireColumnToggle(collapseBtnId, mobileToggleBtnId, colId) {
+  const col = document.getElementById(colId);
+  const collapseBtn = document.getElementById(collapseBtnId);
+  if (collapseBtn) {
+    collapseBtn.onclick = () => {
+      const collapsed = !col.classList.contains("collapsed");
+      col.classList.toggle("collapsed", collapsed);
+      collapseBtn.setAttribute("aria-expanded", String(!collapsed));
+    };
+  }
+  if (mobileToggleBtnId) {
+    const mobileBtn = document.getElementById(mobileToggleBtnId);
+    mobileBtn.onclick = () => {
+      const opening = !col.classList.contains("open");
+      col.classList.toggle("open", opening);
+      mobileBtn.setAttribute("aria-expanded", String(opening));
+    };
+  }
+}
+
+wireColumnToggle("groups-collapse-btn", null, "groups-col");
+wireColumnToggle("conversations-collapse-btn", "conversations-toggle-btn", "conversations-col");
+wireColumnToggle("context-collapse-btn", "context-toggle-btn", "context-panel");
+
 document.getElementById("sidebar-toggle").onclick = () => {
-  const sidebar = document.getElementById("sidebar");
+  const sidebar = document.getElementById("groups-col");
   const opening = !sidebar.classList.contains("open");
   sidebar.classList.toggle("open", opening);
   document.getElementById("sidebar-toggle").setAttribute("aria-expanded", String(opening));
 };
+
+document.getElementById("group-search").addEventListener("input", (e) => {
+  state.groupSearchTerm = e.target.value;
+  renderGroupList();
+});
 
 document.getElementById("nav-agents").onclick = async () => {
   showView("agents");
@@ -629,12 +723,34 @@ document.getElementById("nav-settings").onclick = async () => {
   await loadSettings();
 };
 
-document.getElementById("new-group-form").onsubmit = async (e) => {
+document.getElementById("new-group-btn").onclick = () => openGroupForm();
+
+document.getElementById("group-form-cancel").onclick = () => closeGroupForm();
+
+document.getElementById("group-form-backdrop").addEventListener("click", (e) => {
+  if (e.target.id === "group-form-backdrop") closeGroupForm();
+});
+
+document.getElementById("group-form").onsubmit = async (e) => {
   e.preventDefault();
-  const input = document.getElementById("new-group-name");
-  await api("/api/groups", { method: "POST", body: JSON.stringify({ name: input.value }) });
-  input.value = "";
+  const name = document.getElementById("group-form-name").value.trim();
+  if (!name) return;
+  const icon = document.getElementById("group-icon-grid").dataset.selected || GROUP_ICON_OPTIONS[0];
+
+  if (state.editingGroupId) {
+    await api(`/api/groups/${state.editingGroupId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, icon }),
+    });
+  } else {
+    await api("/api/groups", { method: "POST", body: JSON.stringify({ name, icon }) });
+  }
+  closeGroupForm();
   await loadGroups();
+  if (state.activeGroupId) {
+    const updated = state.groups.find((g) => g.id === state.activeGroupId);
+    document.getElementById("channel-header-name").textContent = updated ? `# ${updated.name}` : "";
+  }
 };
 
 document.getElementById("agent-form").onsubmit = async (e) => {
@@ -673,19 +789,23 @@ document.getElementById("delete-agent-btn").onclick = async () => {
   await loadAgents();
 };
 
-document.getElementById("rename-group-btn").onclick = async () => {
+document.getElementById("rename-group-btn").onclick = () => {
   if (!state.activeGroupId) return;
   const group = state.groups.find((g) => g.id === state.activeGroupId);
-  const currentName = group ? group.name : "";
-  const newName = prompt("Novo nome do grupo:", currentName);
-  if (!newName || !newName.trim() || newName.trim() === currentName) return;
-  await api(`/api/groups/${state.activeGroupId}`, {
-    method: "PUT",
-    body: JSON.stringify({ name: newName.trim() }),
+  if (!group) return;
+  openGroupForm({ groupId: group.id, name: group.name, icon: group.icon });
+};
+
+document.getElementById("new-conversation-btn").onclick = async () => {
+  if (!state.activeGroupId) return;
+  const name = prompt("Nome da nova conversa:");
+  if (!name || !name.trim()) return;
+  const conversation = await api(`/api/groups/${state.activeGroupId}/conversations`, {
+    method: "POST",
+    body: JSON.stringify({ name: name.trim() }),
   });
-  await loadGroups();
-  const updated = state.groups.find((g) => g.id === state.activeGroupId);
-  document.getElementById("channel-header-name").textContent = updated ? `# ${updated.name}` : "";
+  state.conversations.push(conversation);
+  await selectConversation(conversation.id);
 };
 
 document.getElementById("stop-queue-btn").onclick = async () => {

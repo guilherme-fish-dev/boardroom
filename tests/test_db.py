@@ -370,3 +370,30 @@ def test_init_db_migration_is_idempotent_for_conversations(tmp_path, monkeypatch
     finally:
         conn.close()
     assert len(conversations) == 1
+
+
+def test_init_db_adds_icon_column_to_groups_with_default(db):
+    conn = get_connection()
+    try:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(groups)")}
+        cur = conn.execute("INSERT INTO groups (name) VALUES ('sem-icone')")
+        conn.commit()
+        row = conn.execute("SELECT icon FROM groups WHERE id = ?", (cur.lastrowid,)).fetchone()
+    finally:
+        conn.close()
+    assert "icon" in columns
+    assert row["icon"] == "💬"
+
+
+def test_init_db_group_icon_migration_is_idempotent(db):
+    from app.db import init_db
+
+    init_db()
+    init_db()
+
+    conn = get_connection()
+    try:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(groups)")}
+    finally:
+        conn.close()
+    assert "icon" in columns
