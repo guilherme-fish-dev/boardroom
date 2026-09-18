@@ -83,7 +83,10 @@ def update_conversation(group_id: int, conversation_id: int, conversation: Conve
 @router.delete("/{conversation_id}", response_model=list[ConversationOut])
 def delete_conversation(group_id: int, conversation_id: int) -> list[ConversationOut]:
     """Delete a conversation. If it was the group's last one, a new empty 'Geral'
-    conversation is created automatically so the group is never left without one."""
+    conversation is created automatically so the group is never left without one.
+    Unlike other DELETE endpoints in this API (which return 204), this one returns
+    200 with the group's updated conversation list, since the caller needs to learn
+    the id of a replacement 'Geral' conversation when one gets auto-created."""
     conn = get_connection()
     try:
         cur = conn.execute(
