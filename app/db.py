@@ -56,6 +56,7 @@ DEFAULT_SETTINGS = {
     "llama_swap_base_url": "http://localhost:8080",
     "default_vision_model": "",
     "max_pending_per_group": "20",
+    "assistant_model": "",
 }
 
 

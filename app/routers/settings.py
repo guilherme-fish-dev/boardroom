@@ -10,6 +10,7 @@ class Settings(BaseModel):
     llama_swap_base_url: str
     default_vision_model: str
     max_pending_per_group: str
+    assistant_model: str = ""
 
     @field_validator("max_pending_per_group")
     @classmethod
