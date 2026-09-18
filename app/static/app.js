@@ -11,6 +11,8 @@ const state = {
   pollGeneration: 0,
   pollInFlight: false,
   editingAgentId: null,
+  groupSearchTerm: "",
+  editingGroupId: null,
 };
 
 const AGENT_HUES = [200, 280, 340, 130, 20, 245, 165, 305];
@@ -53,14 +55,23 @@ function showView(name) {
 }
 
 function closeSidebarOnMobile() {
-  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("groups-col").classList.remove("open");
   document.getElementById("sidebar-toggle").setAttribute("aria-expanded", "false");
 }
 
 async function loadGroups() {
   state.groups = await api("/api/groups");
+  renderGroupList();
+}
+
+function renderGroupList() {
   const list = document.getElementById("group-list");
   list.innerHTML = "";
+
+  const term = state.groupSearchTerm.trim().toLowerCase();
+  const visible = term
+    ? state.groups.filter((g) => g.name.toLowerCase().includes(term))
+    : state.groups;
 
   if (state.groups.length === 0) {
     const li = document.createElement("li");
@@ -70,11 +81,28 @@ async function loadGroups() {
     return;
   }
 
-  for (const group of state.groups) {
+  if (visible.length === 0) {
     const li = document.createElement("li");
-    li.textContent = group.name;
+    li.className = "empty-hint";
+    li.textContent = "Nenhum grupo encontrado";
+    list.appendChild(li);
+    return;
+  }
+
+  for (const group of visible) {
+    const li = document.createElement("li");
     li.className = state.activeView === "channel" && group.id === state.activeGroupId ? "active" : "";
     li.onclick = () => selectGroup(group.id);
+
+    const icon = document.createElement("span");
+    icon.className = "group-icon";
+    icon.textContent = group.icon;
+    li.appendChild(icon);
+
+    const name = document.createElement("span");
+    name.textContent = group.name;
+    li.appendChild(name);
+
     list.appendChild(li);
   }
 }
@@ -611,12 +639,41 @@ async function loadSettings() {
   );
 }
 
+function wireColumnToggle(collapseBtnId, mobileToggleBtnId, colId) {
+  const col = document.getElementById(colId);
+  const collapseBtn = document.getElementById(collapseBtnId);
+  if (collapseBtn) {
+    collapseBtn.onclick = () => {
+      const collapsed = !col.classList.contains("collapsed");
+      col.classList.toggle("collapsed", collapsed);
+      collapseBtn.setAttribute("aria-expanded", String(!collapsed));
+    };
+  }
+  if (mobileToggleBtnId) {
+    const mobileBtn = document.getElementById(mobileToggleBtnId);
+    mobileBtn.onclick = () => {
+      const opening = !col.classList.contains("open");
+      col.classList.toggle("open", opening);
+      mobileBtn.setAttribute("aria-expanded", String(opening));
+    };
+  }
+}
+
+wireColumnToggle("groups-collapse-btn", null, "groups-col");
+wireColumnToggle("conversations-collapse-btn", "conversations-toggle-btn", "conversations-col");
+wireColumnToggle("context-collapse-btn", "context-toggle-btn", "context-panel");
+
 document.getElementById("sidebar-toggle").onclick = () => {
-  const sidebar = document.getElementById("sidebar");
+  const sidebar = document.getElementById("groups-col");
   const opening = !sidebar.classList.contains("open");
   sidebar.classList.toggle("open", opening);
   document.getElementById("sidebar-toggle").setAttribute("aria-expanded", String(opening));
 };
+
+document.getElementById("group-search").addEventListener("input", (e) => {
+  state.groupSearchTerm = e.target.value;
+  renderGroupList();
+});
 
 document.getElementById("nav-agents").onclick = async () => {
   showView("agents");
@@ -629,13 +686,21 @@ document.getElementById("nav-settings").onclick = async () => {
   await loadSettings();
 };
 
-document.getElementById("new-group-form").onsubmit = async (e) => {
-  e.preventDefault();
-  const input = document.getElementById("new-group-name");
-  await api("/api/groups", { method: "POST", body: JSON.stringify({ name: input.value }) });
-  input.value = "";
-  await loadGroups();
-};
+// TODO(Task 6): #new-group-form/#new-group-name were replaced by the
+// #group-form modal in index.html but the modal's JS wiring isn't in place
+// yet. Guarded (instead of removed) so this dead listener doesn't throw at
+// load time and abort the rest of this script's top-level init — remove this
+// guard once Task 6 wires the modal.
+const newGroupForm = document.getElementById("new-group-form");
+if (newGroupForm) {
+  newGroupForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("new-group-name");
+    await api("/api/groups", { method: "POST", body: JSON.stringify({ name: input.value }) });
+    input.value = "";
+    await loadGroups();
+  };
+}
 
 document.getElementById("agent-form").onsubmit = async (e) => {
   e.preventDefault();
