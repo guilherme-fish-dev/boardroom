@@ -175,12 +175,35 @@ def _ensure_conversations_table(conn: sqlite3.Connection) -> None:
     _migrate_queue_jobs_to_conversation_id(conn)
 
 
+def _recover_orphaned_processing_jobs(conn: sqlite3.Connection) -> None:
+    """A job only sits in 'processing' while some process's worker loop is actively
+    running it (process_next_job marks it 'processing' right before calling the LLM,
+    and always moves it to 'done' or 'error' in a finally-equivalent try/except once
+    that call returns). If one is still 'processing' at startup, the process that was
+    running it is gone — killed or crashed — without a chance to record the outcome,
+    so it would otherwise sit "processing" forever, permanently stuck behind the
+    conversation's pending-status indicator (GET .../messages/pending) with no way to
+    resolve on its own. Reset it to 'pending' so the new process's worker loop retries
+    it, and note the interruption in the conversation so it isn't a silent retry."""
+    stuck = conn.execute("SELECT * FROM queue_jobs WHERE status = 'processing'").fetchall()
+    for job in stuck:
+        conn.execute("UPDATE queue_jobs SET status = 'pending' WHERE id = ?", (job["id"],))
+        conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'system', ?)",
+            (
+                job["conversation_id"],
+                "O servidor foi reiniciado enquanto uma resposta estava sendo gerada — tentando de novo.",
+            ),
+        )
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
         _ensure_hidden_kind_column(conn)
         _ensure_conversations_table(conn)
+        _recover_orphaned_processing_jobs(conn)
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",

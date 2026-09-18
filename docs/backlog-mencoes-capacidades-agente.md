@@ -1,9 +1,9 @@
 # Melhorias pendentes — menções e capacidades do agente
 
 Data: 2026-09-18
-Status: Backlog (não implementado ainda)
+Status: Itens 1 e 2 implementados em 2026-09-18. Item 3 ainda em backlog.
 
-## 1. Preservar ordem das menções
+## 1. Preservar ordem das menções — IMPLEMENTADO
 
 **Problema:** hoje, quando uma mensagem menciona vários agentes de uma vez
 (ex.: `@bob @alice @carla`), `enqueue_mentions` (`app/routers/messages.py`)
@@ -27,7 +27,7 @@ prioridade 1 (todos) + FIFO por `id`, garantir que os INSERTs em
 `queue_jobs` aconteçam na ordem certa dentro de `enqueue_mentions` já
 resolve — o worker processa por `id ASC` dentro da mesma prioridade.
 
-## 2. Deixar explícito pro modelo quais capacidades ele tem
+## 2. Deixar explícito pro modelo quais capacidades ele tem — IMPLEMENTADO
 
 **Problema:** hoje o agente só sabe usar `BUSCAR: <consulta>` (busca web)
 porque isso está fixo em `WEB_SEARCH_INSTRUCTIONS`

@@ -97,6 +97,31 @@ def test_post_message_404_for_unknown_conversation(db):
     assert resp.status_code == 404
 
 
+def test_post_message_with_multiple_mentions_enqueues_jobs_in_text_order(db):
+    client = make_client(db)
+    group, bob, conversation = _setup_group_with_agent(client, agent_name="bob")
+    carla = client.post(
+        "/api/agents",
+        json={"name": "carla", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    alice = client.post(
+        "/api/agents",
+        json={"name": "alice", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": carla["id"]})
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": alice["id"]})
+
+    # Mentioned out of DB-insertion order: carla, alice, bob — jobs must follow this text order.
+    client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "@carla @alice @bob e ai?"})
+
+    conn = get_connection()
+    try:
+        jobs = conn.execute("SELECT agent_id FROM queue_jobs ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    assert [j["agent_id"] for j in jobs] == [carla["id"], alice["id"], bob["id"]]
+
+
 def test_list_messages_excludes_hidden(db):
     client = make_client(db)
     group, agent, conversation = _setup_group_with_agent(client)

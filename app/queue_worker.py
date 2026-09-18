@@ -21,10 +21,28 @@ def _get_setting(conn: sqlite3.Connection, key: str) -> str:
 
 
 def _fetch_next_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
-    return conn.execute(
-        "SELECT * FROM queue_jobs WHERE status = 'pending' "
-        "ORDER BY priority ASC, id ASC LIMIT 1"
+    """Atomically claim the next pending job: pick a candidate, then flip it to
+    'processing' conditioned on it still being 'pending'. This closes a race where two
+    worker loops running against the same database file (e.g. two server processes left
+    running at once by mistake) could both select the same pending job before either had
+    updated its status, and both end up processing — and both inserting a reply for — the
+    same job. If another process's UPDATE won that race in between our SELECT and UPDATE,
+    our UPDATE's WHERE clause no longer matches (rowcount 0) and we simply return None for
+    this cycle instead of double-claiming it; the worker loop's next iteration picks
+    whatever is still actually pending."""
+    row = conn.execute(
+        "SELECT id FROM queue_jobs WHERE status = 'pending' ORDER BY priority ASC, id ASC LIMIT 1"
     ).fetchone()
+    if row is None:
+        return None
+    cur = conn.execute(
+        "UPDATE queue_jobs SET status = 'processing' WHERE id = ? AND status = 'pending'",
+        (row["id"],),
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return conn.execute("SELECT * FROM queue_jobs WHERE id = ?", (row["id"],)).fetchone()
 
 
 WEB_SEARCH_INSTRUCTIONS = (
@@ -33,6 +51,19 @@ WEB_SEARCH_INSTRUCTIONS = (
     "Você vai receber os resultados da busca e poderá responder normalmente em seguida, "
     "ou buscar de novo (no máximo 3 vezes) se ainda precisar de mais informação."
 )
+
+
+def _mention_instructions(other_agent_names: list[str]) -> str:
+    if not other_agent_names:
+        return ""
+    names_list = ", ".join(f"@{name}" for name in other_agent_names)
+    return (
+        "\n\nVocê também pode mencionar outros agentes deste grupo escrevendo @nome-exato "
+        "em qualquer parte da sua resposta, para trazer a opinião deles pra conversa ou "
+        "encadear uma sequência de respostas (ex.: pedir pra outro agente validar ou "
+        "continuar o que você disse). Use o nome exato cadastrado do agente. "
+        f"Agentes deste grupo que você pode mencionar: {names_list}."
+    )
 
 # Ancorado ao início de linha (não à string inteira) pra pegar o padrão mesmo quando o
 # modelo escreve um preâmbulo numa linha separada antes de "BUSCAR: ...". Deliberadamente
@@ -44,10 +75,25 @@ SEARCH_PATTERN = re.compile(r"^\s*BUSCAR:\s*(.+?)\s*$", re.IGNORECASE | re.MULTI
 MAX_SEARCHES_PER_TURN = 3
 
 
+def _other_group_agent_names(conn: sqlite3.Connection, conversation_id: int, agent_id: int) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT agents.name FROM agents
+        JOIN group_members ON group_members.agent_id = agents.id
+        JOIN conversations ON conversations.group_id = group_members.group_id
+        WHERE conversations.id = ? AND agents.id != ?
+        ORDER BY agents.name
+        """,
+        (conversation_id, agent_id),
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
 def _build_history(
     conn: sqlite3.Connection,
     conversation_id: int,
     agent_persona: str,
+    agent_id: int,
     *,
     exclude_image_descriptions: bool = False,
 ) -> list[dict]:
@@ -56,10 +102,25 @@ def _build_history(
         query += " AND (hidden = 0 OR IFNULL(hidden_kind, '') != 'image_description')"
     query += " ORDER BY id"
     rows = conn.execute(query, (conversation_id,)).fetchall()
-    messages = [{"role": "system", "content": agent_persona + WEB_SEARCH_INSTRUCTIONS}]
+    other_names = _other_group_agent_names(conn, conversation_id, agent_id)
+    agent_names = {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM agents")}
+    system_content = agent_persona + WEB_SEARCH_INSTRUCTIONS + _mention_instructions(other_names)
+    messages = [{"role": "system", "content": system_content}]
     for row in rows:
-        role = "assistant" if row["sender_type"] == "agent" else "user"
-        messages.append({"role": role, "content": row["content"]})
+        if row["sender_type"] == "agent" and row["sender_id"] == agent_id:
+            # This agent's own past turn: keep it as its own "assistant" voice, so the
+            # model recognizes it as something *it* said.
+            messages.append({"role": "assistant", "content": row["content"]})
+        elif row["sender_type"] == "agent":
+            # Another agent's turn, from this agent's point of view, is external input —
+            # not this model's own words. Without the name prefix, every agent's reply
+            # collapses onto the same "assistant" role, so a model looking back at its
+            # history sees another agent's message as something *it* already said, and
+            # can end up just repeating it back instead of responding.
+            name = agent_names.get(row["sender_id"], "outro agente")
+            messages.append({"role": "user", "content": f"{name}: {row['content']}"})
+        else:
+            messages.append({"role": "user", "content": row["content"]})
     return messages
 
 
@@ -110,6 +171,7 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         conn,
         job["conversation_id"],
         agent["persona_prompt"],
+        agent["id"],
         exclude_image_descriptions=image_base64 is not None,
     )
 
@@ -183,7 +245,7 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
             )
         return
 
-    enqueue_mentions(conn, job["conversation_id"], agent_message_id, reply)
+    enqueue_mentions(conn, job["conversation_id"], agent_message_id, reply, author_agent_id=agent["id"])
 
 
 def process_next_job() -> bool:
@@ -193,9 +255,6 @@ def process_next_job() -> bool:
         job = _fetch_next_job(conn)
         if job is None:
             return False
-
-        conn.execute("UPDATE queue_jobs SET status = 'processing' WHERE id = ?", (job["id"],))
-        conn.commit()
 
         try:
             if job["job_type"] == "describe_image":

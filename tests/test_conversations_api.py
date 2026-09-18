@@ -100,3 +100,59 @@ def test_delete_conversation_404_for_unknown_id(db):
 
     resp = client.delete(f"/api/groups/{group['id']}/conversations/9999")
     assert resp.status_code == 404
+
+
+def test_stop_cancels_pending_jobs_and_leaves_processing(db):
+    client = make_client(db)
+    group = _create_group(client)
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO agents (name, persona_prompt, model_name) VALUES ('leo', 'p', 'm')"
+        )
+        agent_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+            "VALUES (?, ?, 'agent_turn', 1, '{}')",
+            (conversation["id"], agent_id),
+        )
+        conn.execute(
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload, status) "
+            "VALUES (?, ?, 'agent_turn', 1, '{}', 'processing')",
+            (conversation["id"], agent_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = client.post(f"/api/groups/{group['id']}/conversations/{conversation['id']}/stop")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"cancelled_pending": 1, "still_processing": 1}
+
+    conn = get_connection()
+    try:
+        statuses = {
+            row["status"]
+            for row in conn.execute(
+                "SELECT status FROM queue_jobs WHERE conversation_id = ?", (conversation["id"],)
+            )
+        }
+        system_message = conn.execute(
+            "SELECT content FROM messages WHERE conversation_id = ? AND sender_type = 'system'",
+            (conversation["id"],),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert statuses == {"error", "processing"}
+    assert "1 resposta" in system_message["content"]
+
+
+def test_stop_404_for_unknown_conversation(db):
+    client = make_client(db)
+    group = _create_group(client)
+
+    resp = client.post(f"/api/groups/{group['id']}/conversations/9999/stop")
+    assert resp.status_code == 404

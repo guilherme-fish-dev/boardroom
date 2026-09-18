@@ -10,7 +10,11 @@ def chat_completion(
     messages: list[dict],
     http_client: httpx.Client | None = None,
     image_base64: str | None = None,
-    timeout: float = 120.0,
+    # Reasoning models can legitimately think for several minutes; 1800s is a safety net
+    # against a truly hung connection (not real "thinking" time), not a normal ceiling —
+    # without it, a dead connection would wedge this job in 'processing' forever and block
+    # every other job behind it in the single-worker queue until the server is restarted.
+    timeout: float | None = 1800.0,
 ) -> str:
     """Call the llama-swap OpenAI-compatible /v1/chat/completions endpoint.
 

@@ -413,10 +413,17 @@ def test_process_next_job_queue_limit_is_scoped_per_conversation(db, monkeypatch
     """
     conn = get_connection()
     agent_id = _create_agent(conn)
+    # A second, distinct agent to mention in the reply: an agent mentioning itself is now
+    # deliberately excluded from enqueue_mentions (self-mention infinite-loop guard, see
+    # app.routers.messages.enqueue_mentions), so "@bob" replying with "@bob" would no longer
+    # enqueue a follow-up job — irrelevant to what this test is actually checking (that the
+    # queue limit is scoped per conversation, not per group).
+    other_agent_id = _create_agent(conn, name="alice")
     group_id = _create_group(conn)
     conversation_a = _create_conversation(conn, group_id, name="Conversa A")
     conversation_b = _create_conversation(conn, group_id, name="Conversa B")
     _add_member(conn, group_id, agent_id)
+    _add_member(conn, group_id, other_agent_id)
 
     # Saturate conversation_a's own queue limit (20 active jobs), with lower priority so they
     # are not picked first by process_next_job().
@@ -442,7 +449,7 @@ def test_process_next_job_queue_limit_is_scoped_per_conversation(db, monkeypatch
     conn.close()
 
     monkeypatch.setattr(
-        "app.queue_worker.chat_completion", lambda **kwargs: "@bob de novo?"
+        "app.queue_worker.chat_completion", lambda **kwargs: "@alice de novo?"
     )
 
     process_next_job()
@@ -727,6 +734,69 @@ def test_process_next_job_does_not_treat_buscar_mention_mid_sentence_as_search_c
 
     assert len(agent_messages) == 1
     assert agent_messages[0]["content"] == reply_text
+
+
+def test_process_next_job_system_prompt_lists_other_group_agents_for_mentioning(db, monkeypatch):
+    conn = get_connection()
+    bob_id = _create_agent(conn, name="bob")
+    alice_id = _create_agent(conn, name="alice")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, bob_id)
+    _add_member(conn, group_id, alice_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, bob_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "olá",
+    )
+
+    process_next_job()
+
+    system_content = calls[0]["messages"][0]["content"]
+    assert "@alice" in system_content
+    assert "mencionar outros agentes" in system_content
+
+
+def test_process_next_job_system_prompt_omits_mention_instructions_when_alone_in_group(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "olá",
+    )
+
+    process_next_job()
+
+    system_content = calls[0]["messages"][0]["content"]
+    assert "mencionar outros agentes" not in system_content
 
 
 def test_process_next_job_buscar_same_line_preamble_leaks_as_text_not_search(db, monkeypatch):

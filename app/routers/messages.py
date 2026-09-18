@@ -26,7 +26,14 @@ class MessageOut(BaseModel):
     content: str
     image_path: str | None
     hidden: bool
+    hidden_kind: str | None
     created_at: str
+
+
+class PendingJobOut(BaseModel):
+    agent_id: int | None
+    agent_name: str | None
+    job_type: str
 
 
 def _row_to_message(row: sqlite3.Row) -> MessageOut:
@@ -38,12 +45,24 @@ def _row_to_message(row: sqlite3.Row) -> MessageOut:
         content=row["content"],
         image_path=row["image_path"],
         hidden=bool(row["hidden"]),
+        hidden_kind=row["hidden_kind"],
         created_at=row["created_at"],
     )
 
 
-def enqueue_mentions(conn: sqlite3.Connection, conversation_id: int, trigger_message_id: int, content: str) -> None:
-    """Create agent_turn jobs for every mentioned agent that is a member of the conversation's group."""
+def enqueue_mentions(
+    conn: sqlite3.Connection,
+    conversation_id: int,
+    trigger_message_id: int,
+    content: str,
+    *,
+    author_agent_id: int | None = None,
+) -> None:
+    """Create agent_turn jobs for every mentioned agent that is a member of the conversation's
+    group. author_agent_id, when the content being scanned is itself an agent's own reply,
+    excludes that agent from the jobs created — otherwise an agent that mentions its own name
+    (e.g. quoting itself, or a persona prompt that has it sign its messages) would enqueue a
+    turn for itself and could keep doing so forever, one job triggering the next."""
     names = extract_mentions(content)
     if not names:
         return
@@ -59,19 +78,35 @@ def enqueue_mentions(conn: sqlite3.Connection, conversation_id: int, trigger_mes
     placeholders = ",".join("?" for _ in names)
     rows = conn.execute(
         f"""
-        SELECT agents.id FROM agents
+        SELECT agents.id, lower(agents.name) AS name FROM agents
         JOIN group_members ON group_members.agent_id = agents.id
         WHERE group_members.group_id = ? AND lower(agents.name) IN ({placeholders})
         """,
         (conversation["group_id"], *names),
     ).fetchall()
+    agent_ids_by_name = {row["name"]: row["id"] for row in rows}
 
-    for row in rows:
+    # Enqueue in the order names appear in the text (not DB row order) so agents respond
+    # in the same order they were mentioned.
+    for name in names:
+        agent_id = agent_ids_by_name.get(name)
+        if agent_id is None or agent_id == author_agent_id:
+            continue
         conn.execute(
             "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
             "VALUES (?, ?, 'agent_turn', 1, ?)",
-            (conversation_id, row["id"], json.dumps({"trigger_message_id": trigger_message_id})),
+            (conversation_id, agent_id, json.dumps({"trigger_message_id": trigger_message_id})),
         )
+
+
+
+# Messages are hidden=1 by default so they don't clutter the visible chat (e.g. the raw
+# image description text, or the "BUSCAR: ..." search-tool exchange with the model) while
+# still being fed back to the LLM as context (queue_worker._build_history doesn't filter by
+# hidden at all). search_result is the one hidden kind that's useful to *show* the user (so
+# they can tell a reply was actually backed by a web search, not guessed) — displayed as a
+# small chip rather than a full bubble, so it stays included here despite hidden=1.
+_VISIBLE_MESSAGES_WHERE = "conversation_id = ? AND (hidden = 0 OR hidden_kind = 'search_result')"
 
 
 @router.get("", response_model=list[MessageOut])
@@ -80,17 +115,38 @@ def list_messages(conversation_id: int, since_id: int | None = None) -> list[Mes
     try:
         if since_id is None:
             rows = conn.execute(
-                "SELECT * FROM messages WHERE conversation_id = ? AND hidden = 0 ORDER BY id",
+                f"SELECT * FROM messages WHERE {_VISIBLE_MESSAGES_WHERE} ORDER BY id",
                 (conversation_id,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM messages WHERE conversation_id = ? AND hidden = 0 AND id > ? ORDER BY id",
+                f"SELECT * FROM messages WHERE {_VISIBLE_MESSAGES_WHERE} AND id > ? ORDER BY id",
                 (conversation_id, since_id),
             ).fetchall()
     finally:
         conn.close()
     return [_row_to_message(r) for r in rows]
+
+
+@router.get("/pending", response_model=list[PendingJobOut])
+def list_pending_jobs(conversation_id: int) -> list[PendingJobOut]:
+    """Agent/image jobs still queued or running for this conversation, so the UI can show
+    a "Fulano está respondendo..." indicator instead of leaving the user guessing."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT queue_jobs.agent_id AS agent_id, agents.name AS agent_name, queue_jobs.job_type AS job_type "
+            "FROM queue_jobs LEFT JOIN agents ON agents.id = queue_jobs.agent_id "
+            "WHERE queue_jobs.conversation_id = ? AND queue_jobs.status IN ('pending', 'processing') "
+            "ORDER BY queue_jobs.id",
+            (conversation_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        PendingJobOut(agent_id=r["agent_id"], agent_name=r["agent_name"], job_type=r["job_type"])
+        for r in rows
+    ]
 
 
 @router.post("", response_model=MessageOut, status_code=201)
