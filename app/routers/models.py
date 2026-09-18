@@ -1,5 +1,3 @@
-import sqlite3
-
 from fastapi import APIRouter, HTTPException
 
 from app.db import get_connection, get_setting
