@@ -159,3 +159,26 @@ def test_delete_group_cascades_members_messages_and_jobs(db):
     assert conversations == []
     assert messages == []
     assert jobs == []
+
+
+def test_create_group_with_custom_icon(db):
+    client = make_client(db)
+    resp = client.post("/api/groups", json={"name": "investidores", "icon": "📈"})
+    assert resp.status_code == 201
+    assert resp.json()["icon"] == "📈"
+
+
+def test_create_group_without_icon_defaults_to_speech_bubble(db):
+    client = make_client(db)
+    resp = client.post("/api/groups", json={"name": "investidores"})
+    assert resp.status_code == 201
+    assert resp.json()["icon"] == "💬"
+
+
+def test_update_group_changes_icon(db):
+    client = make_client(db)
+    group = client.post("/api/groups", json={"name": "investidores"}).json()
+
+    resp = client.put(f"/api/groups/{group['id']}", json={"name": "investidores", "icon": "💰"})
+    assert resp.status_code == 200
+    assert resp.json()["icon"] == "💰"
