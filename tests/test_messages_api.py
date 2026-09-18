@@ -26,6 +26,21 @@ def _setup_group_with_agent(client, agent_name="bob"):
     return group, agent, conversation
 
 
+def test_messages_are_isolated_between_conversations_in_the_same_group(db):
+    client = make_client(db)
+    group, agent, geral = _setup_group_with_agent(client)
+    outra = client.post(f"/api/groups/{group['id']}/conversations", json={"name": "outra"}).json()
+
+    client.post(f"/api/conversations/{geral['id']}/messages", json={"content": "mensagem na geral"})
+    client.post(f"/api/conversations/{outra['id']}/messages", json={"content": "mensagem na outra"})
+
+    geral_contents = [m["content"] for m in client.get(f"/api/conversations/{geral['id']}/messages").json()]
+    outra_contents = [m["content"] for m in client.get(f"/api/conversations/{outra['id']}/messages").json()]
+
+    assert geral_contents == ["mensagem na geral"]
+    assert outra_contents == ["mensagem na outra"]
+
+
 def test_post_message_without_mention_creates_no_job(db):
     client = make_client(db)
     group, agent, conversation = _setup_group_with_agent(client)

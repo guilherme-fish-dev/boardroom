@@ -144,6 +144,105 @@ def test_init_db_migrates_group_id_messages_to_conversations(tmp_path, monkeypat
     assert job["conversation_id"] == conversations[0]["id"]
 
 
+def test_init_db_resumes_migration_interrupted_after_rename(tmp_path, monkeypatch):
+    """Simulates a crash between the rename+create step and the copy+drop step of
+    _ensure_conversations_table (ALTER TABLE ... RENAME TO commits immediately in SQLite and
+    can't be rolled back, so this is a real state the migration must be able to resume from
+    without losing data)."""
+    from app.db import get_connection, init_db
+
+    db_file = tmp_path / "interrupted.db"
+    monkeypatch.setenv("BOARDROOM_DB_PATH", str(db_file))
+
+    conn = get_connection()
+    conn.executescript(
+        """
+        CREATE TABLE groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE messages_old (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            sender_type TEXT NOT NULL CHECK (sender_type IN ('user','agent','system')),
+            sender_id INTEGER,
+            content TEXT NOT NULL,
+            image_path TEXT,
+            hidden INTEGER NOT NULL DEFAULT 0,
+            hidden_kind TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            sender_type TEXT NOT NULL CHECK (sender_type IN ('user','agent','system')),
+            sender_id INTEGER,
+            content TEXT NOT NULL,
+            image_path TEXT,
+            hidden INTEGER NOT NULL DEFAULT 0,
+            hidden_kind TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE queue_jobs_old (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            agent_id INTEGER,
+            job_type TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE queue_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            agent_id INTEGER,
+            job_type TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+    conn.execute("INSERT INTO groups (id, name) VALUES (1, 'investidores')")
+    conn.execute("INSERT INTO conversations (id, group_id, name) VALUES (1, 1, 'Geral')")
+    conn.execute(
+        "INSERT INTO messages_old (id, group_id, sender_type, content) VALUES (1, 1, 'user', 'oi')"
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs_old (id, group_id, agent_id, job_type, priority, payload) "
+        "VALUES (1, 1, NULL, 'agent_turn', 1, '{}')"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db()
+
+    conn = get_connection()
+    try:
+        tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        conversations = conn.execute("SELECT * FROM conversations").fetchall()
+        message = conn.execute("SELECT * FROM messages WHERE id = 1").fetchone()
+        job = conn.execute("SELECT * FROM queue_jobs WHERE id = 1").fetchone()
+    finally:
+        conn.close()
+
+    assert "messages_old" not in tables
+    assert "queue_jobs_old" not in tables
+    assert len(conversations) == 1  # no duplicate "Geral" created for the already-migrated group
+    assert message["conversation_id"] == conversations[0]["id"]
+    assert message["content"] == "oi"
+    assert job["conversation_id"] == conversations[0]["id"]
+
+
 def test_init_db_migration_is_idempotent_for_conversations(tmp_path, monkeypatch):
     from app.db import get_connection, init_db
 

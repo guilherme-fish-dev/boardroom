@@ -89,83 +89,95 @@ def _ensure_hidden_kind_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE messages ADD COLUMN hidden_kind TEXT")
 
 
+def _existing_tables(conn: sqlite3.Connection) -> set[str]:
+    return {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def _migrate_messages_to_conversation_id(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "group_id" in columns:
+        conn.execute("ALTER TABLE messages RENAME TO messages_old")
+        conn.execute(
+            "CREATE TABLE messages ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,"
+            "sender_type TEXT NOT NULL CHECK (sender_type IN ('user','agent','system')),"
+            "sender_id INTEGER,"
+            "content TEXT NOT NULL,"
+            "image_path TEXT,"
+            "hidden INTEGER NOT NULL DEFAULT 0,"
+            "hidden_kind TEXT,"
+            "created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            ")"
+        )
+
+    if "messages_old" in _existing_tables(conn):
+        conn.execute(
+            "INSERT OR IGNORE INTO messages (id, conversation_id, sender_type, sender_id, "
+            "content, image_path, hidden, hidden_kind, created_at) "
+            "SELECT m.id, c.id, m.sender_type, m.sender_id, m.content, m.image_path, "
+            "m.hidden, m.hidden_kind, m.created_at "
+            "FROM messages_old m JOIN conversations c ON c.group_id = m.group_id AND c.name = 'Geral'"
+        )
+        conn.execute("DROP TABLE messages_old")
+
+
+def _migrate_queue_jobs_to_conversation_id(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(queue_jobs)")}
+    if "group_id" in columns:
+        conn.execute("ALTER TABLE queue_jobs RENAME TO queue_jobs_old")
+        conn.execute(
+            "CREATE TABLE queue_jobs ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,"
+            "agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,"
+            "job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image')),"
+            "priority INTEGER NOT NULL,"
+            "payload TEXT NOT NULL,"
+            "status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),"
+            "created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            ")"
+        )
+
+    if "queue_jobs_old" in _existing_tables(conn):
+        conn.execute(
+            "INSERT OR IGNORE INTO queue_jobs (id, conversation_id, agent_id, job_type, "
+            "priority, payload, status, created_at) "
+            "SELECT j.id, c.id, j.agent_id, j.job_type, j.priority, j.payload, j.status, j.created_at "
+            "FROM queue_jobs_old j JOIN conversations c ON c.group_id = j.group_id AND c.name = 'Geral'"
+        )
+        conn.execute("DROP TABLE queue_jobs_old")
+
+
 def _ensure_conversations_table(conn: sqlite3.Connection) -> None:
     """Migrate a pre-conversations database: create one 'Geral' conversation per existing
     group and move messages/queue_jobs from group_id to conversation_id. No-op on a fresh
     install (SCHEMA already creates messages/queue_jobs with conversation_id, so the
-    `group_id` column never exists) and no-op on an already-migrated database."""
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
-    if "group_id" not in columns:
+    `group_id` column never exists) and no-op on an already-migrated database.
+
+    This migration is resumable rather than atomic: `ALTER TABLE ... RENAME TO` commits
+    immediately in SQLite even inside an explicit transaction (verified empirically — it is
+    not something an app-level BEGIN/COMMIT can prevent), so a process crash between any two
+    statements here cannot be rolled back. Every step is instead idempotent and re-derives
+    how far a previous (possibly interrupted) run got, so re-running `init_db()` after a crash
+    always finishes the migration without losing or duplicating any row, regardless of which
+    statement it died on."""
+    tables = _existing_tables(conn)
+    messages_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    migration_pending = (
+        "group_id" in messages_columns or "messages_old" in tables or "queue_jobs_old" in tables
+    )
+    if not migration_pending:
         return
 
-    conversation_id_by_group: dict[int, int] = {}
-    for row in conn.execute("SELECT id FROM groups"):
-        cur = conn.execute(
-            "INSERT INTO conversations (group_id, name) VALUES (?, 'Geral')", (row["id"],)
-        )
-        conversation_id_by_group[row["id"]] = cur.lastrowid
-
-    conn.execute("ALTER TABLE messages RENAME TO messages_old")
+    # Idempotent: only backfills a 'Geral' conversation for a group that doesn't have one yet,
+    # so re-running this after a crash never creates a duplicate.
     conn.execute(
-        "CREATE TABLE messages ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,"
-        "sender_type TEXT NOT NULL CHECK (sender_type IN ('user','agent','system')),"
-        "sender_id INTEGER,"
-        "content TEXT NOT NULL,"
-        "image_path TEXT,"
-        "hidden INTEGER NOT NULL DEFAULT 0,"
-        "hidden_kind TEXT,"
-        "created_at TEXT NOT NULL DEFAULT (datetime('now'))"
-        ")"
+        "INSERT INTO conversations (group_id, name) "
+        "SELECT id, 'Geral' FROM groups WHERE id NOT IN (SELECT group_id FROM conversations)"
     )
-    for row in conn.execute("SELECT * FROM messages_old"):
-        conn.execute(
-            "INSERT INTO messages (id, conversation_id, sender_type, sender_id, content, "
-            "image_path, hidden, hidden_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                row["id"],
-                conversation_id_by_group[row["group_id"]],
-                row["sender_type"],
-                row["sender_id"],
-                row["content"],
-                row["image_path"],
-                row["hidden"],
-                row["hidden_kind"],
-                row["created_at"],
-            ),
-        )
-    conn.execute("DROP TABLE messages_old")
-
-    conn.execute("ALTER TABLE queue_jobs RENAME TO queue_jobs_old")
-    conn.execute(
-        "CREATE TABLE queue_jobs ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,"
-        "agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,"
-        "job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image')),"
-        "priority INTEGER NOT NULL,"
-        "payload TEXT NOT NULL,"
-        "status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),"
-        "created_at TEXT NOT NULL DEFAULT (datetime('now'))"
-        ")"
-    )
-    for row in conn.execute("SELECT * FROM queue_jobs_old"):
-        conn.execute(
-            "INSERT INTO queue_jobs (id, conversation_id, agent_id, job_type, priority, "
-            "payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                row["id"],
-                conversation_id_by_group[row["group_id"]],
-                row["agent_id"],
-                row["job_type"],
-                row["priority"],
-                row["payload"],
-                row["status"],
-                row["created_at"],
-            ),
-        )
-    conn.execute("DROP TABLE queue_jobs_old")
+    _migrate_messages_to_conversation_id(conn)
+    _migrate_queue_jobs_to_conversation_id(conn)
 
 
 def init_db() -> None:
