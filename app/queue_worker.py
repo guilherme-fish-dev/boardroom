@@ -145,6 +145,8 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
             }
         )
         reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
+        if SEARCH_PATTERN.match(reply):
+            reply = "Não consegui concluir a busca a tempo, mas posso ajudar com o que já sei — pode perguntar de novo."
 
     cur = conn.execute(
         "INSERT INTO messages (group_id, sender_type, sender_id, content) "

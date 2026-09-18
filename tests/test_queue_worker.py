@@ -515,3 +515,48 @@ def test_process_next_job_search_failure_does_not_crash_the_job(db, monkeypatch)
     assert job["status"] == "done"
     assert len(agent_messages) == 1
     assert agent_messages[0]["content"] == "Sem internet, mas posso ajudar de outra forma."
+
+
+def test_process_next_job_forced_answer_still_searching_falls_back_to_generic_message(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'pesquise sem parar')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(
+        [
+            "BUSCAR: um",
+            "BUSCAR: dois",
+            "BUSCAR: tres",
+            "BUSCAR: quatro",
+            "BUSCAR: mais uma vez",
+        ]
+    )
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+    monkeypatch.setattr("app.queue_worker.web_search", lambda query, **kwargs: f"resultado de {query}")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == (
+        "Não consegui concluir a busca a tempo, mas posso ajudar com o que já sei — pode perguntar de novo."
+    )
