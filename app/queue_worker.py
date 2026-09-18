@@ -163,7 +163,10 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
 
     # Count active jobs (this job is still 'processing' at this point) to decide whether the
     # conversation's queue has room for a follow-up job from this reply. Antes da introdução de
-    # múltiplas conversas por grupo, esse limite era por grupo; agora é por conversa individual.
+    # múltiplas conversas por grupo, esse limite era por grupo; agora é por conversa individual —
+    # um grupo com várias conversas ativas pode ter mais jobs simultâneos no total do que antes.
+    # A setting continua se chamando "max_pending_per_group" (nome desatualizado) porque renomeá-la
+    # tocaria settings.py e o frontend, fora do escopo desta migração.
     max_pending = int(_get_setting(conn, "max_pending_per_group") or "20")
     active_count = conn.execute(
         "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? AND status IN ('pending','processing')",
