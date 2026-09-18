@@ -148,6 +148,7 @@ async function selectGroup(groupId) {
   state.activeGroupId = groupId;
   const group = state.groups.find((g) => g.id === groupId);
   document.getElementById("channel-header-name").textContent = group ? `# ${group.name}` : "";
+  document.getElementById("channel-header-icon").textContent = group ? group.icon : "";
   document.getElementById("channel-empty").classList.add("hidden");
   document.getElementById("channel-content").classList.remove("hidden");
   showView("channel");
@@ -169,14 +170,39 @@ async function loadConversations(groupId) {
 
 function renderConversationContext() {
   const el = document.getElementById("context-conversation-info");
+  el.innerHTML = "";
   const conversation = state.conversations.find((c) => c.id === state.activeConversationId);
-  if (!conversation) {
-    el.textContent = "";
-    return;
-  }
+  if (!conversation) return;
+
   const created = new Date(conversation.created_at.replace(" ", "T") + "Z");
   const formatted = created.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
-  el.textContent = `${conversation.name} · criada em ${formatted}`;
+
+  const card = document.createElement("div");
+  card.className = "context-card";
+
+  const icon = document.createElement("span");
+  icon.className = "context-card-icon";
+  icon.textContent = "📄";
+  card.appendChild(icon);
+
+  const text = document.createElement("span");
+  text.className = "context-card-text";
+  const name = document.createElement("span");
+  name.className = "context-card-name";
+  name.textContent = conversation.name;
+  const date = document.createElement("span");
+  date.className = "context-card-date";
+  date.textContent = `criada em ${formatted}`;
+  text.appendChild(name);
+  text.appendChild(date);
+  card.appendChild(text);
+
+  const chevron = document.createElement("span");
+  chevron.className = "context-card-chevron";
+  chevron.textContent = "›";
+  card.appendChild(chevron);
+
+  el.appendChild(card);
 }
 
 function renderConversationList() {
@@ -187,6 +213,11 @@ function renderConversationList() {
     const card = document.createElement("li");
     card.className = "conversation-card" + (conversation.id === state.activeConversationId ? " active" : "");
     card.onclick = () => selectConversation(conversation.id);
+
+    const icon = document.createElement("span");
+    icon.className = "conversation-card-icon";
+    icon.textContent = "💬";
+    card.appendChild(icon);
 
     const name = document.createElement("span");
     name.className = "conversation-card-name";
@@ -750,6 +781,7 @@ document.getElementById("group-form").onsubmit = async (e) => {
   if (state.activeGroupId) {
     const updated = state.groups.find((g) => g.id === state.activeGroupId);
     document.getElementById("channel-header-name").textContent = updated ? `# ${updated.name}` : "";
+    document.getElementById("channel-header-icon").textContent = updated ? updated.icon : "";
   }
 };
 

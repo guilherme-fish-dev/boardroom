@@ -103,12 +103,23 @@ body {
   overflow-y: auto;
 }
 
-#groups-col h1 {
+.logo { display: flex; align-items: center; gap: 10px; margin: 4px 4px 0; }
+.logo-mark {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-active));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
   font-size: 16px;
-  font-weight: 700;
-  margin: 4px 4px 0;
-  letter-spacing: -0.01em;
+  color: var(--accent-ink);
 }
+.logo-text { display: flex; flex-direction: column; min-width: 0; }
+.logo-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.logo-subtitle { font-size: 11px; color: var(--ink-faint); }
 
 .col-header { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-faint); }
 
@@ -124,8 +135,12 @@ body {
   text-align: left;
   font-size: 13px;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   transition: background-color 150ms ease, color 150ms ease;
 }
+.nav-icon { font-size: 14px; }
 #groups-col nav button:hover { background: var(--surface); color: var(--ink); }
 #groups-col nav button.active { background: var(--surface); color: var(--ink); }
 
@@ -148,20 +163,54 @@ body {
 
 #group-list { list-style: none; padding: 0; margin: 0; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 #group-list li {
-  padding: 7px 10px;
+  padding: 6px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--ink-muted);
   font-size: 13px;
-  transition: background-color 150ms ease, color 150ms ease;
+  display: flex;
+  align-items: center;
+  border: 1px solid transparent;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
 }
 #group-list li:hover { background: var(--surface); color: var(--ink); }
-#group-list li.active { background: var(--surface); color: var(--ink); font-weight: 600; }
+#group-list li.active { background: var(--surface); color: var(--ink); font-weight: 600; border-color: var(--accent); }
 #group-list li.empty-hint { color: var(--ink-faint); font-style: italic; cursor: default; }
 #group-list li.empty-hint:hover { background: transparent; }
 
 #group-search { margin-bottom: 4px; }
-.group-icon { margin-right: 6px; }
+
+.group-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  margin-right: 8px;
+  font-size: 13px;
+}
+#channel-header-icon { width: 30px; height: 30px; font-size: 15px; }
+
+.quote-block {
+  border-radius: var(--radius-md);
+  padding: 16px 12px;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.55) 100%),
+    url("/static/mountain-bg.svg");
+  background-size: cover;
+  background-position: bottom;
+}
+.quote-block p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f3ead9;
+  line-height: 1.4;
+}
+#context-panel .quote-block { margin-top: auto; }
 
 #main-panel { flex: 1; display: flex; flex-direction: column; padding: 20px 24px; overflow: hidden; min-width: 0; }
 
@@ -214,6 +263,19 @@ body {
   transition: color 150ms ease;
 }
 .member-badge button:hover { color: var(--danger); }
+
+#add-member-select {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink-muted);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+#add-member-select:hover { border-color: var(--border-strong); color: var(--ink); }
 
 #queue-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 16px; margin-bottom: 4px; }
 #queue-indicator { font-size: 12px; color: var(--ink-faint); }
@@ -470,7 +532,19 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 }
 .conversation-card:hover { background: var(--surface-hover); color: var(--ink); }
 .conversation-card.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-.conversation-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.conversation-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+}
+.conversation-card.active .conversation-card-icon { background: rgba(0, 0, 0, 0.12); }
+.conversation-card-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .conversation-card-actions { display: inline-flex; gap: 6px; flex: 0 0 auto; }
 .conversation-card-rename, .conversation-card-delete { color: var(--ink-faint); font-size: 13px; line-height: 1; transition: color 150ms ease; }
 .conversation-card.active .conversation-card-rename, .conversation-card.active .conversation-card-delete { color: var(--accent-ink); opacity: 0.75; }
@@ -480,16 +554,54 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 /* Task 9: painel de contexto */
 .context-block { display: flex; flex-direction: column; gap: 8px; }
 .context-block-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-faint); }
-#context-conversation-info { font-size: 13px; color: var(--ink-muted); }
-.tool-badge {
-  display: inline-flex;
-  align-self: flex-start;
+
+.context-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  cursor: default;
+}
+.context-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  font-size: 14px;
+}
+.context-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.context-card-name { font-size: 13px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-card-date { font-size: 11px; color: var(--ink-faint); }
+.context-card-chevron { color: var(--ink-faint); font-size: 16px; flex: 0 0 auto; }
+
+.tool-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
   font-size: 12px;
   color: var(--ink-muted);
+}
+.tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 13px;
 }
 
 /* Task 9: modal de grupo e grade de emoji */

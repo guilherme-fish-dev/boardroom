@@ -13,17 +13,26 @@
     <aside id="groups-col">
       <button type="button" id="groups-collapse-btn" class="col-handle" aria-label="Recolher grupos" aria-expanded="true">‹</button>
       <div class="col-body">
-        <h1>Boardroom</h1>
+        <div class="logo">
+          <div class="logo-mark">A</div>
+          <div class="logo-text">
+            <span class="logo-title">Boardroom</span>
+            <span class="logo-subtitle">AI Agents Workspace</span>
+          </div>
+        </div>
         <nav>
-          <button id="nav-agents" type="button">Agentes</button>
-          <button id="nav-settings" type="button">Configurações</button>
+          <button id="nav-agents" type="button"><span class="nav-icon">👥</span> Agentes</button>
+          <button id="nav-settings" type="button"><span class="nav-icon">⚙️</span> Configurações</button>
         </nav>
         <div class="sidebar-section">
           <div class="sidebar-section-title">Grupos</div>
           <input id="group-search" type="search" placeholder="Buscar grupos" />
           <ul id="group-list"></ul>
-          <button type="button" id="new-group-btn" class="btn-primary">+ Novo grupo</button>
         </div>
+        <div class="quote-block">
+          <p>Melhores decisões hoje, maiores conquistas amanhã.</p>
+        </div>
+        <button type="button" id="new-group-btn" class="btn-primary">+ Novo grupo</button>
       </div>
     </aside>
 
@@ -46,9 +55,10 @@
         <div id="channel-content" class="hidden">
           <div class="chat-main">
             <div id="channel-header">
+              <span id="channel-header-icon" class="group-icon"></span>
               <span id="channel-header-name"></span>
-              <button type="button" id="rename-group-btn" class="btn-secondary">Renomear</button>
-              <button type="button" id="delete-group-btn" class="btn-secondary">Apagar</button>
+              <button type="button" id="rename-group-btn" class="btn-secondary">✎ Renomear</button>
+              <button type="button" id="delete-group-btn" class="btn-secondary">🗑 Apagar</button>
               <button type="button" id="conversations-toggle-btn" class="mobile-only-toggle btn-secondary" aria-label="Abrir conversas" aria-expanded="false">☰</button>
               <button type="button" id="context-toggle-btn" class="mobile-only-toggle btn-secondary" aria-label="Abrir contexto" aria-expanded="false">i</button>
             </div>
@@ -83,7 +93,13 @@
               </div>
               <div class="context-block">
                 <div class="context-block-title">Ferramentas ativas</div>
-                <div class="tool-badge">🌐 Busca na Web</div>
+                <div class="tool-badge">
+                  <span class="tool-icon">🌐</span>
+                  <span>Busca na Web</span>
+                </div>
+              </div>
+              <div class="quote-block">
+                <p>Contexto bem definido gera respostas melhores.</p>
               </div>
             </div>
             <button type="button" id="context-collapse-btn" class="col-handle" aria-label="Recolher contexto" aria-expanded="true">›</button>
