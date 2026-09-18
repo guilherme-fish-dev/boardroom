@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     image_path TEXT,
     hidden INTEGER NOT NULL DEFAULT 0,
+    hidden_kind TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -73,10 +74,17 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_hidden_kind_column(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "hidden_kind" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN hidden_kind TEXT")
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
+        _ensure_hidden_kind_column(conn)
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",

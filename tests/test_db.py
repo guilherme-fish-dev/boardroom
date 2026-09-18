@@ -42,3 +42,26 @@ def test_get_setting_returns_empty_string_for_unknown_key(db):
     finally:
         conn.close()
     assert value == ""
+
+
+def test_init_db_adds_hidden_kind_column_to_messages(db):
+    conn = get_connection()
+    try:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    finally:
+        conn.close()
+    assert "hidden_kind" in columns
+
+
+def test_init_db_migration_is_idempotent(db):
+    from app.db import init_db
+
+    init_db()
+    init_db()
+
+    conn = get_connection()
+    try:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    finally:
+        conn.close()
+    assert "hidden_kind" in columns
