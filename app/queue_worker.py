@@ -42,7 +42,7 @@ def _build_history(
 ) -> list[dict]:
     query = "SELECT sender_type, sender_id, content FROM messages WHERE group_id = ?"
     if exclude_image_descriptions:
-        query += " AND NOT (hidden = 1 AND hidden_kind = 'image_description')"
+        query += " AND (hidden = 0 OR IFNULL(hidden_kind, '') != 'image_description')"
     query += " ORDER BY id"
     rows = conn.execute(query, (group_id,)).fetchall()
     messages = [{"role": "system", "content": agent_persona + WEB_SEARCH_INSTRUCTIONS}]
