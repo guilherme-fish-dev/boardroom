@@ -22,14 +22,15 @@ def _setup_group_with_agent(client, agent_name="bob"):
     ).json()
     group = client.post("/api/groups", json={"name": "investidores"}).json()
     client.post(f"/api/groups/{group['id']}/members", json={"agent_id": agent["id"]})
-    return group, agent
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+    return group, agent, conversation
 
 
 def test_post_message_without_mention_creates_no_job(db):
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
+    group, agent, conversation = _setup_group_with_agent(client)
 
-    resp = client.post(f"/api/groups/{group['id']}/messages", json={"content": "oi pessoal"})
+    resp = client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "oi pessoal"})
     assert resp.status_code == 201
 
     conn = get_connection()
@@ -42,9 +43,9 @@ def test_post_message_without_mention_creates_no_job(db):
 
 def test_post_message_with_mention_creates_agent_turn_job(db):
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
+    group, agent, conversation = _setup_group_with_agent(client)
 
-    resp = client.post(f"/api/groups/{group['id']}/messages", json={"content": "@bob o que acha?"})
+    resp = client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "@bob o que acha?"})
     message = resp.json()
 
     conn = get_connection()
@@ -56,15 +57,16 @@ def test_post_message_with_mention_creates_agent_turn_job(db):
     assert jobs[0]["job_type"] == "agent_turn"
     assert jobs[0]["agent_id"] == agent["id"]
     assert jobs[0]["priority"] == 1
+    assert jobs[0]["conversation_id"] == conversation["id"]
     payload = json.loads(jobs[0]["payload"])
     assert payload["trigger_message_id"] == message["id"]
 
 
 def test_post_message_mentioning_non_member_creates_no_job(db):
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
+    group, agent, conversation = _setup_group_with_agent(client)
 
-    client.post(f"/api/groups/{group['id']}/messages", json={"content": "@alguem-que-nao-existe oi"})
+    client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "@alguem-que-nao-existe oi"})
 
     conn = get_connection()
     try:
@@ -74,33 +76,39 @@ def test_post_message_mentioning_non_member_creates_no_job(db):
     assert jobs == []
 
 
+def test_post_message_404_for_unknown_conversation(db):
+    client = make_client(db)
+    resp = client.post("/api/conversations/9999/messages", json={"content": "oi"})
+    assert resp.status_code == 404
+
+
 def test_list_messages_excludes_hidden(db):
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
-    client.post(f"/api/groups/{group['id']}/messages", json={"content": "visível"})
+    group, agent, conversation = _setup_group_with_agent(client)
+    client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "visível"})
 
     conn = get_connection()
     try:
         conn.execute(
-            "INSERT INTO messages (group_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
-            (group["id"], "oculta"),
+            "INSERT INTO messages (conversation_id, sender_type, content, hidden) VALUES (?, 'system', ?, 1)",
+            (conversation["id"], "oculta"),
         )
         conn.commit()
     finally:
         conn.close()
 
-    resp = client.get(f"/api/groups/{group['id']}/messages")
+    resp = client.get(f"/api/conversations/{conversation['id']}/messages")
     contents = [m["content"] for m in resp.json()]
     assert contents == ["visível"]
 
 
 def test_list_messages_since_id_returns_only_newer(db):
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
-    first = client.post(f"/api/groups/{group['id']}/messages", json={"content": "primeira"}).json()
-    second = client.post(f"/api/groups/{group['id']}/messages", json={"content": "segunda"}).json()
+    group, agent, conversation = _setup_group_with_agent(client)
+    first = client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "primeira"}).json()
+    second = client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "segunda"}).json()
 
-    resp = client.get(f"/api/groups/{group['id']}/messages", params={"since_id": first["id"]})
+    resp = client.get(f"/api/conversations/{conversation['id']}/messages", params={"since_id": first["id"]})
     contents = [m["content"] for m in resp.json()]
     assert contents == ["segunda"]
 
@@ -108,17 +116,18 @@ def test_list_messages_since_id_returns_only_newer(db):
 def test_upload_image_creates_message_and_priority_job(db, tmp_path, monkeypatch):
     monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
+    group, agent, conversation = _setup_group_with_agent(client)
 
     files = {"image": ("cat.png", b"fake-png-bytes", "image/png")}
     resp = client.post(
-        f"/api/groups/{group['id']}/messages/image",
+        f"/api/conversations/{conversation['id']}/messages/image",
         data={"content": "olha essa foto"},
         files=files,
     )
     assert resp.status_code == 201
     body = resp.json()
     assert body["image_path"] is not None
+    assert body["conversation_id"] == conversation["id"]
 
     conn = get_connection()
     try:
@@ -128,16 +137,17 @@ def test_upload_image_creates_message_and_priority_job(db, tmp_path, monkeypatch
     assert len(jobs) == 1
     assert jobs[0]["job_type"] == "describe_image"
     assert jobs[0]["priority"] == 0
+    assert jobs[0]["conversation_id"] == conversation["id"]
 
 
 def test_upload_image_rejects_non_image_content_type(db, tmp_path, monkeypatch):
     monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
+    group, agent, conversation = _setup_group_with_agent(client)
 
     files = {"image": ("notes.txt", b"just text", "text/plain")}
     resp = client.post(
-        f"/api/groups/{group['id']}/messages/image",
+        f"/api/conversations/{conversation['id']}/messages/image",
         data={"content": "isso não é imagem"},
         files=files,
     )
@@ -147,39 +157,52 @@ def test_upload_image_rejects_non_image_content_type(db, tmp_path, monkeypatch):
 def test_upload_image_rejects_oversized_file(db, tmp_path, monkeypatch):
     monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
+    group, agent, conversation = _setup_group_with_agent(client)
 
     big_payload = b"x" * (10 * 1024 * 1024 + 1)
     files = {"image": ("big.png", big_payload, "image/png")}
     resp = client.post(
-        f"/api/groups/{group['id']}/messages/image",
+        f"/api/conversations/{conversation['id']}/messages/image",
         data={"content": "arquivo grande"},
         files=files,
     )
     assert resp.status_code == 413
 
 
+def test_upload_image_404_for_unknown_conversation(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+
+    files = {"image": ("cat.png", b"fake-png-bytes", "image/png")}
+    resp = client.post(
+        "/api/conversations/9999/messages/image",
+        data={"content": "foto"},
+        files=files,
+    )
+    assert resp.status_code == 404
+
+
 def test_get_message_image_returns_file_bytes(db, tmp_path, monkeypatch):
     monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
+    group, agent, conversation = _setup_group_with_agent(client)
 
     files = {"image": ("cat.png", b"fake-png-bytes", "image/png")}
     message = client.post(
-        f"/api/groups/{group['id']}/messages/image",
+        f"/api/conversations/{conversation['id']}/messages/image",
         data={"content": "foto"},
         files=files,
     ).json()
 
-    resp = client.get(f"/api/groups/{group['id']}/messages/{message['id']}/image")
+    resp = client.get(f"/api/conversations/{conversation['id']}/messages/{message['id']}/image")
     assert resp.status_code == 200
     assert resp.content == b"fake-png-bytes"
 
 
 def test_get_message_image_404_when_no_image(db):
     client = make_client(db)
-    group, agent = _setup_group_with_agent(client)
-    message = client.post(f"/api/groups/{group['id']}/messages", json={"content": "sem imagem"}).json()
+    group, agent, conversation = _setup_group_with_agent(client)
+    message = client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "sem imagem"}).json()
 
-    resp = client.get(f"/api/groups/{group['id']}/messages/{message['id']}/image")
+    resp = client.get(f"/api/conversations/{conversation['id']}/messages/{message['id']}/image")
     assert resp.status_code == 404

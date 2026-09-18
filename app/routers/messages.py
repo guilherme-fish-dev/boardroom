@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from app.db import get_connection
 from app.mentions import extract_mentions
 
-router = APIRouter(prefix="/api/groups/{group_id}/messages", tags=["messages"])
+router = APIRouter(prefix="/api/conversations/{conversation_id}/messages", tags=["messages"])
 
 
 class MessageIn(BaseModel):
@@ -20,7 +20,7 @@ class MessageIn(BaseModel):
 
 class MessageOut(BaseModel):
     id: int
-    group_id: int
+    conversation_id: int
     sender_type: str
     sender_id: int | None
     content: str
@@ -32,7 +32,7 @@ class MessageOut(BaseModel):
 def _row_to_message(row: sqlite3.Row) -> MessageOut:
     return MessageOut(
         id=row["id"],
-        group_id=row["group_id"],
+        conversation_id=row["conversation_id"],
         sender_type=row["sender_type"],
         sender_id=row["sender_id"],
         content=row["content"],
@@ -42,10 +42,16 @@ def _row_to_message(row: sqlite3.Row) -> MessageOut:
     )
 
 
-def enqueue_mentions(conn: sqlite3.Connection, group_id: int, trigger_message_id: int, content: str) -> None:
-    """Create agent_turn jobs for every mentioned agent that is a member of the group."""
+def enqueue_mentions(conn: sqlite3.Connection, conversation_id: int, trigger_message_id: int, content: str) -> None:
+    """Create agent_turn jobs for every mentioned agent that is a member of the conversation's group."""
     names = extract_mentions(content)
     if not names:
+        return
+
+    conversation = conn.execute(
+        "SELECT group_id FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    if conversation is None:
         return
 
     placeholders = ",".join("?" for _ in names)
@@ -55,30 +61,30 @@ def enqueue_mentions(conn: sqlite3.Connection, group_id: int, trigger_message_id
         JOIN group_members ON group_members.agent_id = agents.id
         WHERE group_members.group_id = ? AND lower(agents.name) IN ({placeholders})
         """,
-        (group_id, *names),
+        (conversation["group_id"], *names),
     ).fetchall()
 
     for row in rows:
         conn.execute(
-            "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
             "VALUES (?, ?, 'agent_turn', 1, ?)",
-            (group_id, row["id"], json.dumps({"trigger_message_id": trigger_message_id})),
+            (conversation_id, row["id"], json.dumps({"trigger_message_id": trigger_message_id})),
         )
 
 
 @router.get("", response_model=list[MessageOut])
-def list_messages(group_id: int, since_id: int | None = None) -> list[MessageOut]:
+def list_messages(conversation_id: int, since_id: int | None = None) -> list[MessageOut]:
     conn = get_connection()
     try:
         if since_id is None:
             rows = conn.execute(
-                "SELECT * FROM messages WHERE group_id = ? AND hidden = 0 ORDER BY id",
-                (group_id,),
+                "SELECT * FROM messages WHERE conversation_id = ? AND hidden = 0 ORDER BY id",
+                (conversation_id,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM messages WHERE group_id = ? AND hidden = 0 AND id > ? ORDER BY id",
-                (group_id, since_id),
+                "SELECT * FROM messages WHERE conversation_id = ? AND hidden = 0 AND id > ? ORDER BY id",
+                (conversation_id, since_id),
             ).fetchall()
     finally:
         conn.close()
@@ -86,20 +92,22 @@ def list_messages(group_id: int, since_id: int | None = None) -> list[MessageOut
 
 
 @router.post("", response_model=MessageOut, status_code=201)
-def post_message(group_id: int, message: MessageIn) -> MessageOut:
+def post_message(conversation_id: int, message: MessageIn) -> MessageOut:
     conn = get_connection()
     try:
-        group = conn.execute("SELECT id FROM groups WHERE id = ?", (group_id,)).fetchone()
-        if group is None:
-            raise HTTPException(status_code=404, detail="group not found")
+        conversation = conn.execute(
+            "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
 
         cur = conn.execute(
-            "INSERT INTO messages (group_id, sender_type, sender_id, content) "
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
             "VALUES (?, 'user', NULL, ?)",
-            (group_id, message.content),
+            (conversation_id, message.content),
         )
         message_id = cur.lastrowid
-        enqueue_mentions(conn, group_id, message_id, message.content)
+        enqueue_mentions(conn, conversation_id, message_id, message.content)
         conn.commit()
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     finally:
@@ -118,7 +126,7 @@ def _upload_dir() -> Path:
 
 @router.post("/image", response_model=MessageOut, status_code=201)
 async def post_image_message(
-    group_id: int, content: str = Form(""), image: UploadFile = File(...)
+    conversation_id: int, content: str = Form(""), image: UploadFile = File(...)
 ) -> MessageOut:
     if not (image.content_type or "").startswith("image/"):
         raise HTTPException(status_code=415, detail="file must be an image")
@@ -129,27 +137,29 @@ async def post_image_message(
 
     conn = get_connection()
     try:
-        group = conn.execute("SELECT id FROM groups WHERE id = ?", (group_id,)).fetchone()
-        if group is None:
-            raise HTTPException(status_code=404, detail="group not found")
+        conversation = conn.execute(
+            "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
 
         suffix = Path(image.filename or "upload.png").suffix or ".png"
         dest = _upload_dir() / f"{uuid.uuid4().hex}{suffix}"
         dest.write_bytes(body)
 
         cur = conn.execute(
-            "INSERT INTO messages (group_id, sender_type, sender_id, content, image_path) "
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content, image_path) "
             "VALUES (?, 'user', NULL, ?, ?)",
-            (group_id, content, str(dest)),
+            (conversation_id, content, str(dest)),
         )
         message_id = cur.lastrowid
 
         conn.execute(
-            "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
             "VALUES (?, NULL, 'describe_image', 0, ?)",
-            (group_id, json.dumps({"image_path": str(dest), "message_id": message_id})),
+            (conversation_id, json.dumps({"image_path": str(dest), "message_id": message_id})),
         )
-        enqueue_mentions(conn, group_id, message_id, content)
+        enqueue_mentions(conn, conversation_id, message_id, content)
         conn.commit()
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     finally:
@@ -158,12 +168,12 @@ async def post_image_message(
 
 
 @router.get("/{message_id}/image")
-def get_message_image(group_id: int, message_id: int) -> FileResponse:
+def get_message_image(conversation_id: int, message_id: int) -> FileResponse:
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT image_path FROM messages WHERE id = ? AND group_id = ?",
-            (message_id, group_id),
+            "SELECT image_path FROM messages WHERE id = ? AND conversation_id = ?",
+            (message_id, conversation_id),
         ).fetchone()
     finally:
         conn.close()
