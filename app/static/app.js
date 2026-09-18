@@ -80,7 +80,7 @@ async function selectGroup(groupId) {
   state.lastMessageId = 0;
   document.getElementById("message-list").innerHTML = "";
   const group = state.groups.find((g) => g.id === groupId);
-  document.getElementById("channel-header").textContent = group ? `# ${group.name}` : "";
+  document.getElementById("channel-header-name").textContent = group ? `# ${group.name}` : "";
   document.getElementById("channel-empty").classList.add("hidden");
   document.getElementById("channel-content").classList.remove("hidden");
   showView("channel");
@@ -410,6 +410,33 @@ document.getElementById("delete-agent-btn").onclick = async () => {
   await api(`/api/agents/${state.editingAgentId}`, { method: "DELETE" });
   stopEditingAgent();
   await loadAgents();
+};
+
+document.getElementById("rename-group-btn").onclick = async () => {
+  if (!state.activeGroupId) return;
+  const group = state.groups.find((g) => g.id === state.activeGroupId);
+  const currentName = group ? group.name : "";
+  const newName = prompt("Novo nome do grupo:", currentName);
+  if (!newName || !newName.trim() || newName.trim() === currentName) return;
+  await api(`/api/groups/${state.activeGroupId}`, {
+    method: "PUT",
+    body: JSON.stringify({ name: newName.trim() }),
+  });
+  await loadGroups();
+  const updated = state.groups.find((g) => g.id === state.activeGroupId);
+  document.getElementById("channel-header-name").textContent = updated ? `# ${updated.name}` : "";
+};
+
+document.getElementById("delete-group-btn").onclick = async () => {
+  if (!state.activeGroupId) return;
+  const group = state.groups.find((g) => g.id === state.activeGroupId);
+  const name = group ? group.name : "";
+  if (!confirm(`Apagar o grupo "${name}"? Todo o histórico de mensagens será perdido permanentemente.`)) return;
+  await api(`/api/groups/${state.activeGroupId}`, { method: "DELETE" });
+  state.activeGroupId = null;
+  document.getElementById("channel-content").classList.add("hidden");
+  document.getElementById("channel-empty").classList.remove("hidden");
+  await loadGroups();
 };
 
 const personaTextarea = document.getElementById("agent-persona");

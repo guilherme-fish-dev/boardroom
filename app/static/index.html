@@ -30,7 +30,11 @@
           <p>Selecione um grupo na barra lateral, ou crie um novo pra começar uma conversa.</p>
         </div>
         <div id="channel-content" class="hidden">
-          <div id="channel-header"></div>
+          <div id="channel-header">
+            <span id="channel-header-name"></span>
+            <button type="button" id="rename-group-btn" class="btn-secondary">Renomear</button>
+            <button type="button" id="delete-group-btn" class="btn-secondary">Apagar</button>
+          </div>
           <div id="channel-members">
             <span id="member-list"></span>
             <select id="add-member-select">

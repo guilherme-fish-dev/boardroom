@@ -147,7 +147,9 @@ body {
 
 #channel-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
-#channel-header { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+#channel-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+
+#channel-header-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; }
 
 #channel-members {
   display: flex;
