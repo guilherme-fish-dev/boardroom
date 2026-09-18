@@ -43,3 +43,26 @@ def test_update_settings_rejects_invalid_max_pending(db):
         },
     )
     assert resp.status_code == 422
+
+
+def test_get_settings_includes_assistant_model_default(db):
+    client = make_client(db)
+    resp = client.get("/api/settings")
+    assert resp.status_code == 200
+    assert resp.json()["assistant_model"] == ""
+
+
+def test_update_settings_sets_assistant_model(db):
+    client = make_client(db)
+    resp = client.put(
+        "/api/settings",
+        json={
+            "llama_swap_base_url": "http://localhost:8080",
+            "default_vision_model": "",
+            "max_pending_per_group": "20",
+            "assistant_model": "qwen2.5-7b",
+        },
+    )
+    assert resp.status_code == 200
+    resp = client.get("/api/settings")
+    assert resp.json()["assistant_model"] == "qwen2.5-7b"

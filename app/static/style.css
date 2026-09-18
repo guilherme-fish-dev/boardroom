@@ -355,3 +355,18 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
   .message-row { max-width: 88%; }
   #agent-form, #settings-form { max-width: none; }
 }
+
+.persona-assist { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+
+.btn-secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+}
+.btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
+
+.field-error { font-size: 12px; color: var(--danger); }

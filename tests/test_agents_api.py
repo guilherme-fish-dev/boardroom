@@ -100,3 +100,75 @@ def test_update_agent_duplicate_name_rejected(db):
         },
     )
     assert resp.status_code == 409
+
+
+def test_generate_persona_requires_assistant_model_configured(db):
+    client = make_client(db)
+    resp = client.post(
+        "/api/agents/generate-persona",
+        json={"draft": "investidor cauteloso", "agent_name": ""},
+    )
+    assert resp.status_code == 400
+
+
+def test_generate_persona_returns_generated_text(db, monkeypatch):
+    client = make_client(db)
+    client.put(
+        "/api/settings",
+        json={
+            "llama_swap_base_url": "http://localhost:8080",
+            "default_vision_model": "",
+            "max_pending_per_group": "20",
+            "assistant_model": "qwen2.5-7b",
+        },
+    )
+
+    captured = {}
+
+    def fake_chat_completion(**kwargs):
+        captured.update(kwargs)
+        return "Você é um investidor cauteloso, avesso a risco, que pondera cada decisão."
+
+    monkeypatch.setattr("app.routers.agents.chat_completion", fake_chat_completion)
+
+    resp = client.post(
+        "/api/agents/generate-persona",
+        json={"draft": "investidor cauteloso", "agent_name": "bob"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "persona_prompt": "Você é um investidor cauteloso, avesso a risco, que pondera cada decisão."
+    }
+    assert captured["model"] == "qwen2.5-7b"
+    assert captured["base_url"] == "http://localhost:8080"
+    assert captured["messages"][0]["role"] == "system"
+    assert captured["messages"][1]["role"] == "user"
+    assert "bob" in captured["messages"][1]["content"]
+    assert "investidor cauteloso" in captured["messages"][1]["content"]
+
+
+def test_generate_persona_returns_502_on_failure(db, monkeypatch):
+    client = make_client(db)
+    client.put(
+        "/api/settings",
+        json={
+            "llama_swap_base_url": "http://localhost:8080",
+            "default_vision_model": "",
+            "max_pending_per_group": "20",
+            "assistant_model": "qwen2.5-7b",
+        },
+    )
+
+    def _raise(**kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("app.routers.agents.chat_completion", _raise)
+
+    resp = client.post(
+        "/api/agents/generate-persona",
+        json={"draft": "investidor cauteloso", "agent_name": ""},
+    )
+
+    assert resp.status_code == 502
+    assert "connection refused" in resp.json()["detail"]

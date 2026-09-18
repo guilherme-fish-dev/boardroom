@@ -290,6 +290,7 @@ async function loadSettings() {
   document.getElementById("setting-base-url").value = settings.llama_swap_base_url;
   document.getElementById("setting-vision-model").value = settings.default_vision_model;
   document.getElementById("setting-max-pending").value = settings.max_pending_per_group;
+  document.getElementById("setting-assistant-model").value = settings.assistant_model;
 }
 
 document.getElementById("sidebar-toggle").onclick = () => {
@@ -333,6 +334,38 @@ document.getElementById("agent-form").onsubmit = async (e) => {
   await loadAgents();
 };
 
+const personaTextarea = document.getElementById("agent-persona");
+const generateBtn = document.getElementById("generate-persona-btn");
+const generateError = document.getElementById("generate-persona-error");
+
+personaTextarea.addEventListener("input", () => {
+  generateBtn.disabled = personaTextarea.value.trim().length === 0;
+});
+
+generateBtn.onclick = async () => {
+  generateError.textContent = "";
+  generateBtn.disabled = true;
+  const originalLabel = generateBtn.textContent;
+  generateBtn.textContent = "Gerando...";
+  personaTextarea.readOnly = true;
+  try {
+    const data = await api("/api/agents/generate-persona", {
+      method: "POST",
+      body: JSON.stringify({
+        draft: personaTextarea.value,
+        agent_name: document.getElementById("agent-name").value,
+      }),
+    });
+    personaTextarea.value = data.persona_prompt;
+  } catch (err) {
+    generateError.textContent = err.message;
+  } finally {
+    personaTextarea.readOnly = false;
+    generateBtn.textContent = originalLabel;
+    generateBtn.disabled = personaTextarea.value.trim().length === 0;
+  }
+};
+
 document.getElementById("settings-form").onsubmit = async (e) => {
   e.preventDefault();
   await api("/api/settings", {
@@ -341,6 +374,7 @@ document.getElementById("settings-form").onsubmit = async (e) => {
       llama_swap_base_url: document.getElementById("setting-base-url").value,
       default_vision_model: document.getElementById("setting-vision-model").value,
       max_pending_per_group: document.getElementById("setting-max-pending").value,
+      assistant_model: document.getElementById("setting-assistant-model").value,
     }),
   });
 };

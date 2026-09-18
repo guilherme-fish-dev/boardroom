@@ -56,6 +56,7 @@ DEFAULT_SETTINGS = {
     "llama_swap_base_url": "http://localhost:8080",
     "default_vision_model": "",
     "max_pending_per_group": "20",
+    "assistant_model": "",
 }
 
 
@@ -84,3 +85,8 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def get_setting(conn: sqlite3.Connection, key: str) -> str:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else ""

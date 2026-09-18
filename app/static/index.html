@@ -58,6 +58,10 @@
           <label>Persona / system prompt
             <textarea id="agent-persona" placeholder="Descreva como esse agente deve pensar e responder" required></textarea>
           </label>
+          <div class="persona-assist">
+            <button type="button" id="generate-persona-btn" class="btn-secondary" disabled>Gerar com IA</button>
+            <span id="generate-persona-error" class="field-error"></span>
+          </div>
           <label>Modelo (llama-swap)
             <select id="agent-model" required></select>
           </label>
@@ -76,6 +80,9 @@
           </label>
           <label>Limite de jobs por grupo
             <input id="setting-max-pending" type="number" min="1" required />
+          </label>
+          <label>Modelo assistente (gerar personas)
+            <input id="setting-assistant-model" placeholder="ex.: qwen2.5-7b" />
           </label>
           <button type="submit" class="btn-primary">Salvar</button>
         </form>

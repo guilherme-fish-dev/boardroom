@@ -3,7 +3,8 @@ import sqlite3
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.db import get_connection
+from app.db import get_connection, get_setting
+from app.llm_client import chat_completion
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -79,3 +80,55 @@ def update_agent(agent_id: int, agent: AgentIn) -> AgentOut:
     finally:
         conn.close()
     return _row_to_agent(row)
+
+
+PERSONA_SYSTEM_PROMPT = (
+    "Você expande um esboço curto de persona num system prompt detalhado para um agente de "
+    "IA que participa de conversas em grupo com outros agentes de IA. Mantenha o ponto de "
+    "vista central do esboço, adicione traços de personalidade, forma de argumentar, e "
+    "limites claros de comportamento. Responda só com o texto do system prompt final, sem "
+    "comentários extras."
+)
+
+
+class GeneratePersonaIn(BaseModel):
+    draft: str
+    agent_name: str = ""
+
+
+class GeneratePersonaOut(BaseModel):
+    persona_prompt: str
+
+
+@router.post("/generate-persona", response_model=GeneratePersonaOut)
+def generate_persona(payload: GeneratePersonaIn) -> GeneratePersonaOut:
+    conn = get_connection()
+    try:
+        assistant_model = get_setting(conn, "assistant_model")
+        base_url = get_setting(conn, "llama_swap_base_url")
+    finally:
+        conn.close()
+
+    if not assistant_model:
+        raise HTTPException(
+            status_code=400,
+            detail="configure um modelo assistente em Configurações antes de usar essa função",
+        )
+
+    user_content = payload.draft
+    if payload.agent_name:
+        user_content = f"Nome do agente: {payload.agent_name}\n\nEsboço: {payload.draft}"
+
+    try:
+        persona_prompt = chat_completion(
+            base_url=base_url,
+            model=assistant_model,
+            messages=[
+                {"role": "system", "content": PERSONA_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"não foi possível gerar a persona: {exc}")
+
+    return GeneratePersonaOut(persona_prompt=persona_prompt)
