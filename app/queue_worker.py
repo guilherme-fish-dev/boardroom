@@ -34,7 +34,7 @@ WEB_SEARCH_INSTRUCTIONS = (
     "ou buscar de novo (no máximo 3 vezes) se ainda precisar de mais informação."
 )
 
-SEARCH_PATTERN = re.compile(r"^\s*BUSCAR:\s*(.+?)\s*$", re.IGNORECASE | re.DOTALL)
+SEARCH_PATTERN = re.compile(r"BUSCAR:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 MAX_SEARCHES_PER_TURN = 3
 
 
@@ -115,7 +115,7 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     )
 
     searches_done = 0
-    match = SEARCH_PATTERN.match(reply)
+    match = SEARCH_PATTERN.search(reply)
     while match and searches_done < MAX_SEARCHES_PER_TURN:
         query = match.group(1).strip()
         try:
@@ -133,7 +133,7 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         history.append({"role": "user", "content": f'Resultados da busca por "{query}":\n{results}'})
         reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
         searches_done += 1
-        match = SEARCH_PATTERN.match(reply)
+        match = SEARCH_PATTERN.search(reply)
 
     if match:
         history.append({"role": "assistant", "content": reply})
@@ -145,7 +145,7 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
             }
         )
         reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
-        if SEARCH_PATTERN.match(reply):
+        if SEARCH_PATTERN.search(reply):
             reply = "Não consegui concluir a busca a tempo, mas posso ajudar com o que já sei — pode perguntar de novo."
 
     cur = conn.execute(

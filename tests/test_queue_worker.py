@@ -560,3 +560,46 @@ def test_process_next_job_forced_answer_still_searching_falls_back_to_generic_me
     assert agent_messages[0]["content"] == (
         "Não consegui concluir a busca a tempo, mas posso ajudar com o que já sei — pode perguntar de novo."
     )
+
+
+def test_process_next_job_detects_buscar_even_with_prose_around_it(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (group_id, sender_type, content) VALUES (?, 'user', 'que dia é hoje?')",
+        (group_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (group_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (group_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    replies = iter(["Vou pesquisar isso. BUSCAR: data de hoje", "Hoje é 18 de setembro de 2026."])
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: next(replies))
+
+    captured_queries = []
+
+    def _fake_web_search(query, **kwargs):
+        captured_queries.append(query)
+        return "Hoje é 18/09/2026."
+
+    monkeypatch.setattr("app.queue_worker.web_search", _fake_web_search)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert captured_queries == ["data de hoje"]
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Hoje é 18 de setembro de 2026."
