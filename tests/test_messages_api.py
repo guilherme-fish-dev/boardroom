@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.db import get_connection
 from app.main import create_app
+from app.routers.messages import _pair_exchange_count
 
 
 def make_client(db):
@@ -246,9 +247,6 @@ def test_get_message_image_404_when_no_image(db):
 
     resp = client.get(f"/api/conversations/{conversation['id']}/messages/{message['id']}/image")
     assert resp.status_code == 404
-
-
-from app.routers.messages import _pair_exchange_count
 
 
 def test_pair_exchange_count_counts_pure_alternating_chain(db):
