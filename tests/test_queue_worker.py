@@ -844,3 +844,163 @@ def test_process_next_job_buscar_same_line_preamble_leaks_as_text_not_search(db,
 
     assert len(agent_messages) == 1
     assert agent_messages[0]["content"] == reply_text
+
+
+def test_process_next_job_skip_marker_posts_no_message(db, monkeypatch):
+    conn = get_connection()
+    bob_id = _create_agent(conn, name="bob")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, bob_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob concordo')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, bob_id),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: "  [[SKIP]]  ")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute("SELECT * FROM messages WHERE sender_type = 'agent'").fetchall()
+        job = conn.execute("SELECT * FROM queue_jobs").fetchone()
+    finally:
+        conn.close()
+
+    assert agent_messages == []
+    assert job["status"] == "done"
+
+
+def test_process_next_job_skip_marker_case_insensitive(db, monkeypatch):
+    conn = get_connection()
+    bob_id = _create_agent(conn, name="bob")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, bob_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob concordo')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, bob_id),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: "[[skip]]")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute("SELECT * FROM messages WHERE sender_type = 'agent'").fetchall()
+    finally:
+        conn.close()
+    assert agent_messages == []
+
+
+def test_process_next_job_skip_marker_with_extra_text_is_not_treated_as_skip(db, monkeypatch):
+    conn = get_connection()
+    bob_id = _create_agent(conn, name="bob")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, bob_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob concordo')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, bob_id),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: "Concordo. [[SKIP]]")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute("SELECT * FROM messages WHERE sender_type = 'agent'").fetchall()
+    finally:
+        conn.close()
+    assert len(agent_messages) == 1
+    assert agent_messages[0]["content"] == "Concordo. [[SKIP]]"
+
+
+def test_process_next_job_skip_marker_does_not_enqueue_follow_up(db, monkeypatch):
+    conn = get_connection()
+    bob_id = _create_agent(conn, name="bob")
+    alice_id = _create_agent(conn, name="alice")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, bob_id)
+    _add_member(conn, group_id, alice_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob concordo')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, bob_id),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "app.queue_worker.enqueue_mentions",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("não deveria ser chamado")),
+    )
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: "[[SKIP]]")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM queue_jobs").fetchone()
+    finally:
+        conn.close()
+    assert job["status"] == "done"
+
+
+def test_process_next_job_system_prompt_includes_skip_instructions(db, monkeypatch):
+    conn = get_connection()
+    bob_id = _create_agent(conn, name="bob")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, bob_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, bob_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "olá",
+    )
+
+    process_next_job()
+
+    system_content = calls[0]["messages"][0]["content"]
+    assert "[[SKIP]]" in system_content

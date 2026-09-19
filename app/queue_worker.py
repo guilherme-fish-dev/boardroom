@@ -53,6 +53,15 @@ WEB_SEARCH_INSTRUCTIONS = (
 )
 
 
+SKIP_INSTRUCTIONS = (
+    "\n\nSe você foi mencionado apenas para confirmar, concordar ou reagir, e não tem "
+    "nada de substância para acrescentar, responda usando SOMENTE isto, nada mais: [[SKIP]]. "
+    "Isso significa que você optou por não responder e nenhuma mensagem sua será publicada."
+)
+
+SKIP_MARKER = "[[SKIP]]"
+
+
 def _mention_instructions(other_agent_names: list[str]) -> str:
     if not other_agent_names:
         return ""
@@ -104,7 +113,9 @@ def _build_history(
     rows = conn.execute(query, (conversation_id,)).fetchall()
     other_names = _other_group_agent_names(conn, conversation_id, agent_id)
     agent_names = {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM agents")}
-    system_content = agent_persona + WEB_SEARCH_INSTRUCTIONS + _mention_instructions(other_names)
+    system_content = (
+        agent_persona + WEB_SEARCH_INSTRUCTIONS + SKIP_INSTRUCTIONS + _mention_instructions(other_names)
+    )
     messages = [{"role": "system", "content": system_content}]
     for row in rows:
         if row["sender_type"] == "agent" and row["sender_id"] == agent_id:
@@ -215,6 +226,10 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         reply = chat_completion(base_url=base_url, model=agent["model_name"], messages=history)
         if SEARCH_PATTERN.search(reply):
             reply = "Não consegui concluir a busca a tempo, mas posso ajudar com o que já sei — pode perguntar de novo."
+
+    if reply.strip().casefold() == SKIP_MARKER.casefold():
+        conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
+        return
 
     cur = conn.execute(
         "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
