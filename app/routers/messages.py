@@ -119,6 +119,10 @@ def enqueue_mentions(
         agent_id = agent_ids_by_name.get(name)
         if agent_id is None or agent_id == author_agent_id:
             continue
+        if author_agent_id is not None and _pair_exchange_count(
+            conn, conversation_id, author_agent_id, agent_id
+        ) >= MAX_CONSECUTIVE_MENTION_EXCHANGES * 2:
+            continue
         conn.execute(
             "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
             "VALUES (?, ?, 'agent_turn', 1, ?)",

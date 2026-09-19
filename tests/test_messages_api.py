@@ -335,3 +335,126 @@ def test_pair_exchange_count_returns_available_length_when_short(db):
         conn.close()
 
     assert count == 1
+
+
+def test_enqueue_mentions_blocks_pair_in_cooldown(db):
+    client = make_client(db)
+    group, bob, conversation = _setup_group_with_agent(client, agent_name="bob")
+    alice = client.post(
+        "/api/agents",
+        json={"name": "alice", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": alice["id"]})
+
+    conn = get_connection()
+    try:
+        # 6 mensagens alternadas seguidas entre bob e alice (3 idas-e-voltas) já na conversa.
+        for agent_id in [bob["id"], alice["id"]] * 3:
+            conn.execute(
+                "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+                "VALUES (?, 'agent', ?, 'oi')",
+                (conversation["id"], agent_id),
+            )
+        conn.commit()
+
+        # A "sétima" mensagem: bob menciona alice de novo — deveria ser bloqueada pelo cooldown.
+        cur = conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+            "VALUES (?, 'agent', ?, '@alice de novo?')",
+            (conversation["id"], bob["id"]),
+        )
+        trigger_id = cur.lastrowid
+        conn.commit()
+
+        from app.routers.messages import enqueue_mentions
+
+        enqueue_mentions(
+            conn, conversation["id"], trigger_id, "@alice de novo?", author_agent_id=bob["id"]
+        )
+        conn.commit()
+
+        jobs = conn.execute("SELECT * FROM queue_jobs").fetchall()
+    finally:
+        conn.close()
+
+    assert jobs == []
+
+
+def test_enqueue_mentions_pair_cooldown_does_not_affect_other_mentioned_agent(db):
+    client = make_client(db)
+    group, bob, conversation = _setup_group_with_agent(client, agent_name="bob")
+    alice = client.post(
+        "/api/agents",
+        json={"name": "alice", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    carla = client.post(
+        "/api/agents",
+        json={"name": "carla", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": alice["id"]})
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": carla["id"]})
+
+    conn = get_connection()
+    try:
+        for agent_id in [bob["id"], alice["id"]] * 3:
+            conn.execute(
+                "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+                "VALUES (?, 'agent', ?, 'oi')",
+                (conversation["id"], agent_id),
+            )
+        conn.commit()
+
+        cur = conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+            "VALUES (?, 'agent', ?, '@alice @carla e ai?')",
+            (conversation["id"], bob["id"]),
+        )
+        trigger_id = cur.lastrowid
+        conn.commit()
+
+        from app.routers.messages import enqueue_mentions
+
+        enqueue_mentions(
+            conn, conversation["id"], trigger_id, "@alice @carla e ai?", author_agent_id=bob["id"]
+        )
+        conn.commit()
+
+        jobs = conn.execute("SELECT agent_id FROM queue_jobs").fetchall()
+    finally:
+        conn.close()
+
+    assert [j["agent_id"] for j in jobs] == [carla["id"]]
+
+
+def test_enqueue_mentions_from_user_never_blocked_by_cooldown(db):
+    client = make_client(db)
+    group, bob, conversation = _setup_group_with_agent(client, agent_name="bob")
+    alice = client.post(
+        "/api/agents",
+        json={"name": "alice", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": alice["id"]})
+
+    conn = get_connection()
+    try:
+        for agent_id in [bob["id"], alice["id"]] * 3:
+            conn.execute(
+                "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+                "VALUES (?, 'agent', ?, 'oi')",
+                (conversation["id"], agent_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = client.post(
+        f"/api/conversations/{conversation['id']}/messages", json={"content": "@bob @alice o que acham?"}
+    )
+    message = resp.json()
+
+    conn = get_connection()
+    try:
+        jobs = conn.execute("SELECT agent_id FROM queue_jobs").fetchall()
+    finally:
+        conn.close()
+    assert {j["agent_id"] for j in jobs} == {bob["id"], alice["id"]}
