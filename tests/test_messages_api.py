@@ -246,3 +246,94 @@ def test_get_message_image_404_when_no_image(db):
 
     resp = client.get(f"/api/conversations/{conversation['id']}/messages/{message['id']}/image")
     assert resp.status_code == 404
+
+
+from app.routers.messages import _pair_exchange_count
+
+
+def test_pair_exchange_count_counts_pure_alternating_chain(db):
+    client = make_client(db)
+    group, bob, conversation = _setup_group_with_agent(client, agent_name="bob")
+    alice = client.post(
+        "/api/agents",
+        json={"name": "alice", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": alice["id"]})
+
+    conn = get_connection()
+    try:
+        # Cadeia alternada mais recente primeiro (na inserção, mais antiga primeiro):
+        # bob, alice, bob, alice, bob, alice — 6 mensagens, 3 idas-e-voltas completas.
+        for i, agent_id in enumerate([bob["id"], alice["id"]] * 3):
+            conn.execute(
+                "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+                "VALUES (?, 'agent', ?, ?)",
+                (conversation["id"], agent_id, f"msg {i}"),
+            )
+        conn.commit()
+        count = _pair_exchange_count(conn, conversation["id"], alice["id"], bob["id"])
+    finally:
+        conn.close()
+
+    assert count == 6
+
+
+def test_pair_exchange_count_stops_at_third_party_message(db):
+    client = make_client(db)
+    group, bob, conversation = _setup_group_with_agent(client, agent_name="bob")
+    alice = client.post(
+        "/api/agents",
+        json={"name": "alice", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    carla = client.post(
+        "/api/agents",
+        json={"name": "carla", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": alice["id"]})
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": carla["id"]})
+
+    conn = get_connection()
+    try:
+        # Mais antiga -> mais recente: carla quebra a cadeia, depois bob/alice alternam 2x.
+        for agent_id, content in [
+            (carla["id"], "intrusa"),
+            (bob["id"], "m1"),
+            (alice["id"], "m2"),
+            (bob["id"], "m3"),
+            (alice["id"], "m4"),
+        ]:
+            conn.execute(
+                "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+                "VALUES (?, 'agent', ?, ?)",
+                (conversation["id"], agent_id, content),
+            )
+        conn.commit()
+        count = _pair_exchange_count(conn, conversation["id"], alice["id"], bob["id"])
+    finally:
+        conn.close()
+
+    assert count == 4
+
+
+def test_pair_exchange_count_returns_available_length_when_short(db):
+    client = make_client(db)
+    group, bob, conversation = _setup_group_with_agent(client, agent_name="bob")
+    alice = client.post(
+        "/api/agents",
+        json={"name": "alice", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": alice["id"]})
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+            "VALUES (?, 'agent', ?, 'oi')",
+            (conversation["id"], alice["id"]),
+        )
+        conn.commit()
+        count = _pair_exchange_count(conn, conversation["id"], alice["id"], bob["id"])
+    finally:
+        conn.close()
+
+    assert count == 1

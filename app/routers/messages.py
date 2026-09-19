@@ -50,6 +50,33 @@ def _row_to_message(row: sqlite3.Row) -> MessageOut:
     )
 
 
+MAX_CONSECUTIVE_MENTION_EXCHANGES = 3  # 3 idas-e-voltas = 6 mensagens alternadas seguidas
+
+
+def _pair_exchange_count(
+    conn: sqlite3.Connection, conversation_id: int, agent_a: int, agent_b: int
+) -> int:
+    """Count how many of the most recent messages in the conversation form an unbroken,
+    strictly alternating chain between agent_a and agent_b (starting from the newest message,
+    which is expected to be agent_a's just-inserted reply). Any message from a third agent,
+    from the user, or a system message breaks the chain at that point — which is exactly the
+    "someone else joined, reset the count" behavior we want, with no extra bookkeeping."""
+    rows = conn.execute(
+        "SELECT sender_type, sender_id FROM messages WHERE conversation_id = ? "
+        "ORDER BY id DESC LIMIT ?",
+        (conversation_id, MAX_CONSECUTIVE_MENTION_EXCHANGES * 2 + 1),
+    ).fetchall()
+    expected = agent_a
+    other = agent_b
+    count = 0
+    for row in rows:
+        if row["sender_type"] != "agent" or row["sender_id"] != expected:
+            break
+        count += 1
+        expected, other = other, expected
+    return count
+
+
 def enqueue_mentions(
     conn: sqlite3.Connection,
     conversation_id: int,
