@@ -1,7 +1,7 @@
 # Corte de loop de menções entre agentes
 
 Data: 2026-09-18
-Status: Aprovado para planejamento
+Status: Implementado
 
 ## Contexto e motivação
 
