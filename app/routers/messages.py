@@ -130,7 +130,6 @@ def enqueue_mentions(
         )
 
 
-
 # Messages are hidden=1 by default so they don't clutter the visible chat (e.g. the raw
 # image description text, or the "BUSCAR: ..." search-tool exchange with the model) while
 # still being fed back to the LLM as context (queue_worker._build_history doesn't filter by
