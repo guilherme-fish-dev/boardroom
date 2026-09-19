@@ -1004,3 +1004,61 @@ def test_process_next_job_system_prompt_includes_skip_instructions(db, monkeypat
 
     system_content = calls[0]["messages"][0]["content"]
     assert "[[SKIP]]" in system_content
+
+
+def test_mention_loop_between_two_agents_is_cut_off_by_cooldown(db, monkeypatch):
+    """Fim a fim: bob e alice ficam se mencionando mutuamente. Depois de 3 idas-e-voltas
+    completas (6 mensagens de agente alternadas), o cooldown mecânico (Task 2) impede que a
+    próxima menção mútua gere um novo job — sem depender do [[SKIP]] do modelo (Task 3), que
+    aqui nunca é usado."""
+    conn = get_connection()
+    bob_id = _create_agent(conn, name="bob")
+    alice_id = _create_agent(conn, name="alice")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, bob_id)
+    _add_member(conn, group_id, alice_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob e ai?')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, bob_id),
+    )
+    conn.commit()
+    conn.close()
+
+    # bob e alice se mencionam mutuamente pra sempre, se deixados sem guarda. A primeira
+    # chamada é de bob respondendo ao usuário; a partir daí alterna bob->alice->bob->alice...,
+    # cada um mencionando o outro de volta — um contador de chamadas é suficiente pra decidir
+    # de quem é a vez, sem precisar inferir isso a partir dos kwargs do chat_completion.
+    call_count = {"n": 0}
+
+    def _fake_chat_completion(**kwargs):
+        call_count["n"] += 1
+        return "@alice concordo" if call_count["n"] % 2 == 1 else "@bob concordo"
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", _fake_chat_completion)
+
+    # Processa jobs até a fila esvaziar (ou um teto de segurança bem acima do esperado).
+    for _ in range(30):
+        if not process_next_job():
+            break
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT sender_id FROM messages WHERE sender_type = 'agent' ORDER BY id"
+        ).fetchall()
+        pending = conn.execute(
+            "SELECT COUNT(*) AS c FROM queue_jobs WHERE status = 'pending'"
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+
+    # 6 mensagens de agente (3 idas-e-voltas) e nem uma a mais: a 7ª menção mútua foi bloqueada
+    # pelo cooldown, então a fila esvazia sozinha em vez de continuar indefinidamente.
+    assert len(agent_messages) == 6
+    assert pending == 0
