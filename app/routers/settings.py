@@ -11,12 +11,13 @@ class Settings(BaseModel):
     default_vision_model: str
     max_pending_per_group: str
     assistant_model: str = ""
+    max_history_messages: str = "40"
 
-    @field_validator("max_pending_per_group")
+    @field_validator("max_pending_per_group", "max_history_messages")
     @classmethod
     def _validate_positive_int(cls, v: str) -> str:
         if not v.isdigit() or int(v) <= 0:
-            raise ValueError("max_pending_per_group must be a positive integer")
+            raise ValueError("must be a positive integer")
         return v
 
 

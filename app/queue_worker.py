@@ -6,7 +6,9 @@ import logging
 import re
 import sqlite3
 
-from app.db import get_connection
+import httpx
+
+from app.db import DEFAULT_SETTINGS, get_connection
 from app.llm_client import chat_completion
 from app.mentions import extract_mentions
 from app.routers.messages import enqueue_mentions
@@ -17,7 +19,18 @@ logger = logging.getLogger(__name__)
 
 def _get_setting(conn: sqlite3.Connection, key: str) -> str:
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-    return row["value"] if row else ""
+    if row:
+        return row["value"]
+    return DEFAULT_SETTINGS.get(key, "")
+
+
+def _get_max_history_messages(conn: sqlite3.Connection) -> int:
+    val = _get_setting(conn, "max_history_messages")
+    try:
+        n = int(val)
+        return n if n > 0 else 40
+    except (ValueError, TypeError):
+        return 40
 
 
 def _fetch_next_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
@@ -56,10 +69,22 @@ WEB_SEARCH_INSTRUCTIONS = (
 SKIP_INSTRUCTIONS = (
     "\n\nSe você foi mencionado apenas para confirmar, concordar ou reagir, e não tem "
     "nada de substância para acrescentar, responda usando SOMENTE isto, nada mais: [[SKIP]]. "
+    "Da mesma forma, se outro agente já solicitou dados, formulários ou fez perguntas ao usuário e a conversa "
+    "está aguardando a resposta dele, NUNCA repita as perguntas e NÃO responda apenas para dizer que está "
+    "aguardando ou em prontidão: responda usando SOMENTE [[SKIP]]. "
     "Isso significa que você optou por não responder e nenhuma mensagem sua será publicada."
 )
 
 SKIP_MARKER = "[[SKIP]]"
+
+WAIT_USER_INSTRUCTIONS = (
+    "\n\nSe a sua resposta solicitar dados, números, preenchimento de campos, respostas a perguntas "
+    "ou qualquer decisão/ação do usuário antes que a discussão possa continuar, termine sua resposta "
+    "com a tag [[AGUARDANDO_USUARIO]]. Isso pausará automaticamente a fila dos demais agentes para "
+    "economizar contexto até o usuário responder."
+)
+
+WAIT_USER_MARKERS = ["[[AGUARDANDO_USUARIO]]", "[[WAIT_USER]]"]
 
 
 def _mention_instructions(other_agent_names: list[str]) -> str:
@@ -105,18 +130,40 @@ def _build_history(
     agent_id: int,
     *,
     exclude_image_descriptions: bool = False,
+    max_messages: int | None = None,
 ) -> list[dict]:
+    if max_messages is None:
+        max_messages = _get_max_history_messages(conn)
+
     query = "SELECT sender_type, sender_id, content FROM messages WHERE conversation_id = ?"
     if exclude_image_descriptions:
         query += " AND (hidden = 0 OR IFNULL(hidden_kind, '') != 'image_description')"
     query += " ORDER BY id"
     rows = conn.execute(query, (conversation_id,)).fetchall()
+
+    total_rows = len(rows)
+    omitted = 0
+    if max_messages > 0 and total_rows > max_messages:
+        omitted = total_rows - max_messages
+        rows = rows[-max_messages:]
+
     other_names = _other_group_agent_names(conn, conversation_id, agent_id)
     agent_names = {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM agents")}
     system_content = (
-        agent_persona + WEB_SEARCH_INSTRUCTIONS + SKIP_INSTRUCTIONS + _mention_instructions(other_names)
+        agent_persona
+        + WEB_SEARCH_INSTRUCTIONS
+        + SKIP_INSTRUCTIONS
+        + WAIT_USER_INSTRUCTIONS
+        + _mention_instructions(other_names)
     )
     messages = [{"role": "system", "content": system_content}]
+
+    if omitted > 0:
+        messages.append({
+            "role": "system",
+            "content": f"[Histórico anterior ({omitted} mensagens) foi condensado/omitido para priorizar o contexto recente desta conversa.]",
+        })
+
     for row in rows:
         if row["sender_type"] == "agent" and row["sender_id"] == agent_id:
             # This agent's own past turn: keep it as its own "assistant" voice, so the
@@ -186,12 +233,34 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         exclude_image_descriptions=image_base64 is not None,
     )
 
-    reply = chat_completion(
-        base_url=base_url,
-        model=agent["model_name"],
-        messages=history,
-        image_base64=image_base64,
-    )
+    try:
+        reply = chat_completion(
+            base_url=base_url,
+            model=agent["model_name"],
+            messages=history,
+            image_base64=image_base64,
+        )
+    except httpx.HTTPStatusError as exc:
+        err_text = str(exc).casefold()
+        if "exceed" in err_text and ("context" in err_text or "token" in err_text):
+            logger.warning(f"Contexto excedido para job {job['id']}. Tentando fallback com histórico reduzido...")
+            reduced_history = _build_history(
+                conn,
+                job["conversation_id"],
+                agent["persona_prompt"],
+                agent["id"],
+                exclude_image_descriptions=image_base64 is not None,
+                max_messages=15,
+            )
+            reply = chat_completion(
+                base_url=base_url,
+                model=agent["model_name"],
+                messages=reduced_history,
+                image_base64=image_base64,
+            )
+            history = reduced_history
+        else:
+            raise
 
     searches_done = 0
     match = SEARCH_PATTERN.search(reply)
@@ -231,12 +300,35 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
         return
 
+    needs_user_action = False
+    for marker in WAIT_USER_MARKERS:
+        if marker.casefold() in reply.casefold():
+            needs_user_action = True
+            reply = re.sub(re.escape(marker), "", reply, flags=re.IGNORECASE).strip()
+
+    # Fallback heurístico: se há campos de preenchimento (ex: 'R$ _____') direcionados ao usuário
+    if not needs_user_action and re.search(r"R\$\s*_{3,}|_{5,}", reply):
+        needs_user_action = True
+
+    hidden_kind = "wait_user" if needs_user_action else None
+
     cur = conn.execute(
-        "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
-        "VALUES (?, 'agent', ?, ?)",
-        (job["conversation_id"], agent["id"], reply),
+        "INSERT INTO messages (conversation_id, sender_type, sender_id, content, hidden_kind) "
+        "VALUES (?, 'agent', ?, ?, ?)",
+        (job["conversation_id"], agent["id"], reply, hidden_kind),
     )
     agent_message_id = cur.lastrowid
+
+    if needs_user_action:
+        conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
+        cur_cancel = conn.execute(
+            "UPDATE queue_jobs SET status = 'error' WHERE conversation_id = ? AND status = 'pending'",
+            (job["conversation_id"],),
+        )
+        logger.info(
+            f"Agente {agent['name']} aguarda ação do usuário. Fila pausada ({cur_cancel.rowcount} pendentes cancelados)."
+        )
+        return
 
     # Count active jobs (this job is still 'processing' at this point) to decide whether the
     # conversation's queue has room for a follow-up job from this reply. Antes da introdução de

@@ -3,6 +3,32 @@ from __future__ import annotations
 import httpx
 
 
+def _raise_for_status_with_detail(response: httpx.Response) -> None:
+    if response.is_success:
+        return
+    err_detail = ""
+    try:
+        data = response.json()
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, dict) and "message" in err:
+                err_detail = str(err["message"])
+            elif isinstance(err, str):
+                err_detail = err
+            elif "message" in data:
+                err_detail = str(data["message"])
+            elif "detail" in data:
+                err_detail = str(data["detail"])
+    except Exception:
+        pass
+
+    if not err_detail:
+        err_detail = response.text.strip()[:300] or response.reason_phrase or "Erro desconhecido"
+
+    message = f"llama-swap ({response.status_code}): {err_detail}"
+    raise httpx.HTTPStatusError(message, request=response.request, response=response)
+
+
 def chat_completion(
     *,
     base_url: str,
@@ -50,7 +76,7 @@ def chat_completion(
     client = http_client or httpx.Client(timeout=timeout)
     try:
         response = client.post(f"{base_url}/v1/chat/completions", json=payload, timeout=timeout)
-        response.raise_for_status()
+        _raise_for_status_with_detail(response)
         data = response.json()
         try:
             return data["choices"][0]["message"]["content"]
@@ -79,7 +105,7 @@ def list_models(
     client = http_client or httpx.Client(timeout=timeout)
     try:
         response = client.get(f"{base_url}/v1/models", timeout=timeout)
-        response.raise_for_status()
+        _raise_for_status_with_detail(response)
         data = response.json()
         try:
             return [item["id"] for item in data["data"]]

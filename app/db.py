@@ -66,6 +66,7 @@ DEFAULT_SETTINGS = {
     "default_vision_model": "",
     "max_pending_per_group": "20",
     "assistant_model": "",
+    "max_history_messages": "40",
 }
 
 

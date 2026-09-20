@@ -78,6 +78,29 @@ def test_post_message_with_mention_creates_agent_turn_job(db):
     assert payload["trigger_message_id"] == message["id"]
 
 
+def test_post_message_with_all_mention_enqueues_every_group_member_once(db):
+    client = make_client(db)
+    group, bob, conversation = _setup_group_with_agent(client, agent_name="bob")
+    alice = client.post(
+        "/api/agents",
+        json={"name": "alice", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": alice["id"]})
+
+    response = client.post(
+        f"/api/conversations/{conversation['id']}/messages", json={"content": "@all @bob, opinem"}
+    )
+    assert response.status_code == 201
+
+    conn = get_connection()
+    try:
+        jobs = conn.execute("SELECT agent_id FROM queue_jobs ORDER BY id").fetchall()
+    finally:
+        conn.close()
+
+    assert [job["agent_id"] for job in jobs] == [bob["id"], alice["id"]]
+
+
 def test_post_message_mentioning_non_member_creates_no_job(db):
     client = make_client(db)
     group, agent, conversation = _setup_group_with_agent(client)
@@ -458,3 +481,75 @@ def test_enqueue_mentions_from_user_never_blocked_by_cooldown(db):
     finally:
         conn.close()
     assert {j["agent_id"] for j in jobs} == {bob["id"], alice["id"]}
+
+
+def test_user_reply_without_mention_auto_enqueues_waiting_agent(db):
+    client = make_client(db)
+    group, ana, conversation = _setup_group_with_agent(client, agent_name="ana")
+
+    # Simula que o agente Ana postou uma pergunta com hidden_kind='wait_user'
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content, hidden_kind) "
+            "VALUES (?, 'agent', ?, 'Preencha seus 3 gastos: R$ _____', 'wait_user')",
+            (conversation["id"], ana["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # O usuário envia uma mensagem SEM menção @
+    resp = client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "1. R$ 500, 2. R$ 200, 3. R$ 100"},
+    )
+    assert resp.status_code == 201
+
+    conn = get_connection()
+    try:
+        jobs = conn.execute("SELECT * FROM queue_jobs WHERE conversation_id = ?", (conversation["id"],)).fetchall()
+        assert len(jobs) == 1
+        assert jobs[0]["agent_id"] == ana["id"]
+        assert jobs[0]["job_type"] == "agent_turn"
+        assert jobs[0]["status"] == "pending"
+    finally:
+        conn.close()
+
+
+def test_user_reply_with_explicit_mention_overrides_waiting_agent(db):
+    client = make_client(db)
+    group, ana, conversation = _setup_group_with_agent(client, agent_name="ana")
+    mansur = client.post(
+        "/api/agents",
+        json={"name": "mansur", "persona_prompt": "x", "model_name": "qwen2.5-7b", "vision_capable": False},
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": mansur["id"]})
+
+    # Simula que Ana estava aguardando o usuário
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content, hidden_kind) "
+            "VALUES (?, 'agent', ?, 'Preencha seus 3 gastos: R$ _____', 'wait_user')",
+            (conversation["id"], ana["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # O usuário responde mencionando explicitamente @mansur
+    resp = client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "@mansur veja esses gastos"},
+    )
+    assert resp.status_code == 201
+
+    conn = get_connection()
+    try:
+        jobs = conn.execute("SELECT * FROM queue_jobs WHERE conversation_id = ?", (conversation["id"],)).fetchall()
+        # Apenas @mansur foi enfileirado porque o usuário expressou menção explícita
+        assert len(jobs) == 1
+        assert jobs[0]["agent_id"] == mansur["id"]
+    finally:
+        conn.close()

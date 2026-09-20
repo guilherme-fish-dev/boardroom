@@ -1062,3 +1062,244 @@ def test_mention_loop_between_two_agents_is_cut_off_by_cooldown(db, monkeypatch)
     # pelo cooldown, então a fila esvazia sozinha em vez de continuar indefinidamente.
     assert len(agent_messages) == 6
     assert pending == 0
+
+
+def test_build_history_truncates_and_adds_system_note(db):
+    from app.queue_worker import _build_history
+
+    conn = get_connection()
+    agent_id = _create_agent(conn, name="carlos")
+    group_id = _create_group(conn, name="grupo_historico")
+    conversation_id = _create_conversation(conn, group_id, name="Conversa Longa")
+    _add_member(conn, group_id, agent_id)
+
+    # Inserir 25 mensagens
+    for i in range(25):
+        conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', ?)",
+            (conversation_id, f"Mensagem {i + 1}"),
+        )
+    conn.commit()
+
+    # Com max_messages=10, deve manter a persona, a nota de 15 mensagens omitidas e as 10 últimas mensagens
+    history = _build_history(
+        conn,
+        conversation_id,
+        "Você é um assistente.",
+        agent_id,
+        max_messages=10,
+    )
+    conn.close()
+
+    assert history[0]["role"] == "system"
+    assert "Você é um assistente." in history[0]["content"]
+
+    assert history[1]["role"] == "system"
+    assert "15 mensagens" in history[1]["content"]
+    assert "condensado/omitido" in history[1]["content"]
+
+    # Deve ter 10 mensagens de usuário subsequentes (de 16 a 25)
+    user_msgs = [m for m in history if m["role"] == "user"]
+    assert len(user_msgs) == 10
+    assert user_msgs[0]["content"] == "Mensagem 16"
+    assert user_msgs[-1]["content"] == "Mensagem 25"
+
+
+def test_process_agent_turn_retries_with_reduced_history_on_context_exceeded(db, monkeypatch):
+    import httpx
+
+    conn = get_connection()
+    agent_id = _create_agent(conn, name="debora")
+    group_id = _create_group(conn, name="grupo_fallback")
+    conversation_id = _create_conversation(conn, group_id, name="Conversa Fallback")
+    _add_member(conn, group_id, agent_id)
+
+    for i in range(30):
+        conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', ?)",
+            (conversation_id, f"Mensagem {i + 1}"),
+        )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    call_args = []
+
+    def mock_chat_completion(**kwargs):
+        call_args.append(kwargs)
+        if len(call_args) == 1:
+            req = httpx.Request("POST", "http://localhost:8080/v1/chat/completions")
+            resp = httpx.Response(400, request=req)
+            raise httpx.HTTPStatusError("llama-swap (400): exceeds the available context size", request=req, response=resp)
+        return "Resposta após recuperação do contexto."
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", mock_chat_completion)
+
+    assert process_next_job() is True
+
+    # Confirmar que tentou novamente com histórico reduzido
+    assert len(call_args) == 2
+    # A segunda chamada deve ter mensagens reduzidas (max_messages=15)
+    assert len(call_args[1]["messages"]) < len(call_args[0]["messages"])
+
+    conn = get_connection()
+    try:
+        reply_msg = conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND sender_type = 'agent'",
+            (conversation_id,),
+        ).fetchone()
+        assert reply_msg is not None
+        assert reply_msg["content"] == "Resposta após recuperação do contexto."
+    finally:
+        conn.close()
+
+
+def test_process_agent_turn_wait_user_tag_cancels_pending_jobs_and_suppresses_mentions(db, monkeypatch):
+    conn = get_connection()
+    ana_id = _create_agent(conn, name="ana")
+    mansur_id = _create_agent(conn, name="mansur")
+    milton_id = _create_agent(conn, name="milton")
+    group_id = _create_group(conn, name="comite")
+    conversation_id = _create_conversation(conn, group_id, name="Finanças")
+    _add_member(conn, group_id, ana_id)
+    _add_member(conn, group_id, mansur_id)
+    _add_member(conn, group_id, milton_id)
+
+    # Usuário chamou @all e enfileirou todos os 3
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@all como estão minhas contas?')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, ana_id),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, mansur_id),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, milton_id),
+    )
+    conn.commit()
+    conn.close()
+
+    # Ana responde pedindo números, incluindo [[AGUARDANDO_USUARIO]] e menção a @mansur
+    reply_text = (
+        "Preencha seus dados brutos:\n"
+        "1. Gastos: R$ _____\n"
+        "Estou aguardando seus números!\n"
+        "[[AGUARDANDO_USUARIO]]\n"
+        "Quando você mandar, @mansur analisará."
+    )
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: reply_text)
+
+    # Processa o turno da Ana
+    assert process_next_job() is True
+
+    conn = get_connection()
+    try:
+        # A mensagem da Ana foi salva limpa (sem [[AGUARDANDO_USUARIO]]) e com hidden_kind='wait_user'
+        ana_msg = conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND sender_type = 'agent'",
+            (conversation_id,),
+        ).fetchone()
+        assert ana_msg is not None
+        assert "[[AGUARDANDO_USUARIO]]" not in ana_msg["content"]
+        assert "Preencha seus dados brutos" in ana_msg["content"]
+        assert ana_msg["hidden_kind"] == "wait_user"
+
+        # O job da Ana foi concluído ('done')
+        ana_job = conn.execute("SELECT status FROM queue_jobs WHERE agent_id = ?", (ana_id,)).fetchone()
+        assert ana_job["status"] == "done"
+
+        # Os jobs pendentes de Mansur e Milton foram cancelados ('error') para poupar contexto!
+        mansur_job = conn.execute("SELECT status FROM queue_jobs WHERE agent_id = ?", (mansur_id,)).fetchone()
+        milton_job = conn.execute("SELECT status FROM queue_jobs WHERE agent_id = ?", (milton_id,)).fetchone()
+        assert mansur_job["status"] == "error"
+        assert milton_job["status"] == "error"
+
+        # Nenhuma nova menção a @mansur foi enfileirada (total de jobs = 3)
+        total_jobs = conn.execute("SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ?", (conversation_id,)).fetchone()["c"]
+        assert total_jobs == 3
+    finally:
+        conn.close()
+
+    # Próximo process_next_job não encontra nenhum job pending! Fila parou!
+    assert process_next_job() is False
+
+
+def test_process_agent_turn_wait_user_heuristic_cancels_pending_jobs(db, monkeypatch):
+    conn = get_connection()
+    ana_id = _create_agent(conn, name="ana_h")
+    mansur_id = _create_agent(conn, name="mansur_h")
+    group_id = _create_group(conn, name="comite_h")
+    conversation_id = _create_conversation(conn, group_id, name="Finanças H")
+    _add_member(conn, group_id, ana_id)
+    _add_member(conn, group_id, mansur_id)
+
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, ana_id),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, mansur_id),
+    )
+    conn.commit()
+    conn.close()
+
+    # Sem a tag explícita, mas contendo formulário com 'R$ _____'
+    reply_text = "Por favor informe seus gastos: 1. iFood: R$ _____ 2. Uber: R$ _____"
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: reply_text)
+
+    assert process_next_job() is True
+
+    conn = get_connection()
+    try:
+        ana_msg = conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND sender_type = 'agent'",
+            (conversation_id,),
+        ).fetchone()
+        assert ana_msg["hidden_kind"] == "wait_user"
+
+        mansur_job = conn.execute("SELECT status FROM queue_jobs WHERE agent_id = ?", (mansur_id,)).fetchone()
+        assert mansur_job["status"] == "error"
+    finally:
+        conn.close()
+
+
+def test_process_agent_turn_prompt_includes_wait_user_and_anti_repeat_instructions(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn, name="leo_prompt")
+    group_id = _create_group(conn, name="grupo_prompt")
+    conversation_id = _create_conversation(conn, group_id, name="Conversa Prompt")
+    _add_member(conn, group_id, agent_id)
+
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    captured_messages = []
+
+    def mock_chat(**kwargs):
+        captured_messages.extend(kwargs["messages"])
+        return "Tudo ok!"
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", mock_chat)
+
+    process_next_job()
+
+    system_msg = captured_messages[0]["content"]
+    assert "[[AGUARDANDO_USUARIO]]" in system_msg
+    assert "NUNCA repita as perguntas" in system_msg
+    assert "NÃO responda apenas para dizer que está aguardando" in system_msg
+

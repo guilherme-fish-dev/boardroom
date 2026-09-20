@@ -102,22 +102,34 @@ def enqueue_mentions(
         # pass a conversation_id they just confirmed exists.
         return
 
-    placeholders = ",".join("?" for _ in names)
-    rows = conn.execute(
-        f"""
+    member_rows = conn.execute(
+        """
         SELECT agents.id, lower(agents.name) AS name FROM agents
         JOIN group_members ON group_members.agent_id = agents.id
-        WHERE group_members.group_id = ? AND lower(agents.name) IN ({placeholders})
+        WHERE group_members.group_id = ?
+        ORDER BY agents.id
         """,
-        (conversation["group_id"], *names),
+        (conversation["group_id"],),
     ).fetchall()
-    agent_ids_by_name = {row["name"]: row["id"] for row in rows}
+    agent_ids_by_name = {row["name"]: row["id"] for row in member_rows}
 
-    # Enqueue in the order names appear in the text (not DB row order) so agents respond
-    # in the same order they were mentioned.
+    # Preserve the text order. At @all, expand to every member in a stable order; an
+    # explicit mention of a member already expanded by @all must not create a duplicate job.
+    mentioned_agent_ids: list[int] = []
+    seen_agent_ids: set[int] = set()
     for name in names:
-        agent_id = agent_ids_by_name.get(name)
-        if agent_id is None or agent_id == author_agent_id:
+        target_ids = (
+            [row["id"] for row in member_rows]
+            if name == "all"
+            else [agent_ids_by_name.get(name)]
+        )
+        for agent_id in target_ids:
+            if agent_id is not None and agent_id not in seen_agent_ids:
+                mentioned_agent_ids.append(agent_id)
+                seen_agent_ids.add(agent_id)
+
+    for agent_id in mentioned_agent_ids:
+        if agent_id == author_agent_id:
             continue
         if author_agent_id is not None and _pair_exchange_count(
             conn, conversation_id, author_agent_id, agent_id
@@ -128,6 +140,9 @@ def enqueue_mentions(
             "VALUES (?, ?, 'agent_turn', 1, ?)",
             (conversation_id, agent_id, json.dumps({"trigger_message_id": trigger_message_id})),
         )
+
+
+
 
 
 # Messages are hidden=1 by default so they don't clutter the visible chat (e.g. the raw
@@ -179,6 +194,37 @@ def list_pending_jobs(conversation_id: int) -> list[PendingJobOut]:
     ]
 
 
+def _maybe_enqueue_waiting_agent(
+    conn: sqlite3.Connection, conversation_id: int, trigger_message_id: int, content: str
+) -> bool:
+    """If the message has explicit @mentions, enqueue those agents. Otherwise, check if
+    the most recent visible message in the conversation was from an agent waiting for user
+    action (hidden_kind='wait_user'). If so, automatically enqueue that agent to continue."""
+    names = extract_mentions(content)
+    if names:
+        enqueue_mentions(conn, conversation_id, trigger_message_id, content)
+        return True
+
+    last_msg = conn.execute(
+        "SELECT sender_type, sender_id, hidden_kind FROM messages "
+        "WHERE conversation_id = ? AND id < ? AND hidden = 0 ORDER BY id DESC LIMIT 1",
+        (conversation_id, trigger_message_id),
+    ).fetchone()
+    if (
+        last_msg
+        and last_msg["sender_type"] == "agent"
+        and last_msg["hidden_kind"] == "wait_user"
+        and last_msg["sender_id"] is not None
+    ):
+        conn.execute(
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+            "VALUES (?, ?, 'agent_turn', 1, ?)",
+            (conversation_id, last_msg["sender_id"], json.dumps({"trigger_message_id": trigger_message_id})),
+        )
+        return True
+    return False
+
+
 @router.post("", response_model=MessageOut, status_code=201)
 def post_message(conversation_id: int, message: MessageIn) -> MessageOut:
     conn = get_connection()
@@ -195,7 +241,7 @@ def post_message(conversation_id: int, message: MessageIn) -> MessageOut:
             (conversation_id, message.content),
         )
         message_id = cur.lastrowid
-        enqueue_mentions(conn, conversation_id, message_id, message.content)
+        _maybe_enqueue_waiting_agent(conn, conversation_id, message_id, message.content)
         conn.commit()
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     finally:
@@ -247,7 +293,7 @@ async def post_image_message(
             "VALUES (?, NULL, 'describe_image', 0, ?)",
             (conversation_id, json.dumps({"image_path": str(dest), "message_id": message_id})),
         )
-        enqueue_mentions(conn, conversation_id, message_id, content)
+        _maybe_enqueue_waiting_agent(conn, conversation_id, message_id, content)
         conn.commit()
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     finally:

@@ -22,3 +22,7 @@ def test_extract_mentions_allows_hyphen_and_underscore():
         "investidor-conservador",
         "dev_junior",
     ]
+
+
+def test_extract_mentions_recognizes_all():
+    assert extract_mentions("@all, o que vocÃªs acham?") == ["all"]

@@ -61,16 +61,18 @@ def test_chat_completion_with_image_builds_multimodal_content():
 
 def test_chat_completion_raises_on_http_error():
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "boom"})
+        return httpx.Response(500, json={"error": {"message": "request exceeds context size"}})
 
     client = _client_with_transport(handler)
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
         chat_completion(
             base_url="http://localhost:8080",
             model="qwen2.5-7b",
             messages=[{"role": "user", "content": "oi"}],
             http_client=client,
         )
+    assert "request exceeds context size" in str(exc_info.value)
+    assert "500" in str(exc_info.value)
 
 
 def test_chat_completion_raises_value_error_on_malformed_response():
