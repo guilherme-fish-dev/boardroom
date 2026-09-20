@@ -104,29 +104,52 @@ def _ensure_pdf_path_column(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_queue_jobs_allows_extract_pdf(conn: sqlite3.Connection) -> None:
-    row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='queue_jobs'"
-    ).fetchone()
-    if row is None or "extract_pdf" in row["sql"]:
-        return
-    conn.execute("ALTER TABLE queue_jobs RENAME TO queue_jobs_old")
+    """Adds 'extract_pdf' to the queue_jobs.job_type CHECK constraint by rebuilding the
+    table (SQLite has no ALTER TABLE support for changing a CHECK constraint in place).
+
+    This migration is resumable rather than atomic: `ALTER TABLE ... RENAME TO` commits
+    immediately in SQLite even inside an explicit transaction (verified empirically — it is
+    not something an app-level BEGIN/COMMIT can prevent), so a process crash between any two
+    statements here cannot be rolled back. It uses its own exclusive temp table name
+    (`queue_jobs_pdf_migration_old`) rather than the generic `queue_jobs_old` name used by
+    `_migrate_queue_jobs_to_conversation_id` elsewhere in this file — reusing that name would
+    let a crash here be picked up by the other migration's leftover-table check (or vice
+    versa) and processed against the wrong assumptions (e.g. joining on a `group_id` column
+    that no longer exists), corrupting or orphaning data. Every step below re-checks its own
+    progress: the RENAME only runs if the temp table isn't already there from an earlier
+    interrupted attempt, `queue_jobs` is only recreated if missing, and the INSERT uses
+    OR IGNORE so rows already copied before a prior crash aren't duplicated. Re-running
+    `init_db()` after a crash always finishes the migration without losing or duplicating
+    any row, regardless of which statement it died on."""
+    temp_table = "queue_jobs_pdf_migration_old"
+
+    if temp_table not in _existing_tables(conn):
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='queue_jobs'"
+        ).fetchone()
+        if row is None or "extract_pdf" in row["sql"]:
+            return
+        conn.execute(f"ALTER TABLE queue_jobs RENAME TO {temp_table}")
+
+    if "queue_jobs" not in _existing_tables(conn):
+        conn.execute(
+            "CREATE TABLE queue_jobs ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,"
+            "agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,"
+            "job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image','extract_pdf')),"
+            "priority INTEGER NOT NULL,"
+            "payload TEXT NOT NULL,"
+            "status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),"
+            "created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            ")"
+        )
+
     conn.execute(
-        "CREATE TABLE queue_jobs ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,"
-        "agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,"
-        "job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image','extract_pdf')),"
-        "priority INTEGER NOT NULL,"
-        "payload TEXT NOT NULL,"
-        "status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),"
-        "created_at TEXT NOT NULL DEFAULT (datetime('now'))"
-        ")"
+        f"INSERT OR IGNORE INTO queue_jobs SELECT id, conversation_id, agent_id, job_type, priority, "
+        f"payload, status, created_at FROM {temp_table}"
     )
-    conn.execute(
-        "INSERT INTO queue_jobs SELECT id, conversation_id, agent_id, job_type, priority, "
-        "payload, status, created_at FROM queue_jobs_old"
-    )
-    conn.execute("DROP TABLE queue_jobs_old")
+    conn.execute(f"DROP TABLE {temp_table}")
 
 
 def _existing_tables(conn: sqlite3.Connection) -> set[str]:
