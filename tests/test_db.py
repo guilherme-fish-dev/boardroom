@@ -397,3 +397,73 @@ def test_init_db_group_icon_migration_is_idempotent(db):
     finally:
         conn.close()
     assert "icon" in columns
+
+
+def test_init_db_adds_pdf_path_column_to_messages(db):
+    conn = get_connection()
+    try:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    finally:
+        conn.close()
+    assert "pdf_path" in columns
+
+
+def test_init_db_migrates_queue_jobs_check_to_allow_extract_pdf(tmp_path, monkeypatch):
+    from app.db import init_db
+
+    db_file = tmp_path / "old.db"
+    monkeypatch.setenv("BOARDROOM_DB_PATH", str(db_file))
+
+    conn = get_connection()
+    conn.executescript(
+        """
+        CREATE TABLE groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            icon TEXT NOT NULL DEFAULT '💬',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE queue_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            agent_id INTEGER,
+            job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image')),
+            priority INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+    conn.execute("INSERT INTO groups (id, name) VALUES (1, 'investidores')")
+    conn.execute("INSERT INTO conversations (id, group_id, name) VALUES (1, 1, 'Geral')")
+    conn.execute(
+        "INSERT INTO queue_jobs (id, conversation_id, agent_id, job_type, priority, payload, status) "
+        "VALUES (1, 1, NULL, 'describe_image', 0, '{}', 'done')"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db()
+
+    conn = get_connection()
+    try:
+        old_job = conn.execute("SELECT * FROM queue_jobs WHERE id = 1").fetchone()
+        cur = conn.execute(
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+            "VALUES (1, NULL, 'extract_pdf', 0, '{}')"
+        )
+        conn.commit()
+        new_job = conn.execute("SELECT * FROM queue_jobs WHERE id = ?", (cur.lastrowid,)).fetchone()
+    finally:
+        conn.close()
+
+    assert old_job["job_type"] == "describe_image"
+    assert old_job["status"] == "done"
+    assert new_job["job_type"] == "extract_pdf"

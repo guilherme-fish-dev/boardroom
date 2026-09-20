@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_id INTEGER,
     content TEXT NOT NULL,
     image_path TEXT,
+    pdf_path TEXT,
     hidden INTEGER NOT NULL DEFAULT 0,
     hidden_kind TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS queue_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,
-    job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image')),
+    job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image','extract_pdf')),
     priority INTEGER NOT NULL,
     payload TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),
@@ -94,6 +95,38 @@ def _ensure_group_icon_column(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(groups)")}
     if "icon" not in columns:
         conn.execute("ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT '💬'")
+
+
+def _ensure_pdf_path_column(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "pdf_path" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN pdf_path TEXT")
+
+
+def _ensure_queue_jobs_allows_extract_pdf(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='queue_jobs'"
+    ).fetchone()
+    if row is None or "extract_pdf" in row["sql"]:
+        return
+    conn.execute("ALTER TABLE queue_jobs RENAME TO queue_jobs_old")
+    conn.execute(
+        "CREATE TABLE queue_jobs ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,"
+        "agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,"
+        "job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image','extract_pdf')),"
+        "priority INTEGER NOT NULL,"
+        "payload TEXT NOT NULL,"
+        "status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),"
+        "created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ")"
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs SELECT id, conversation_id, agent_id, job_type, priority, "
+        "payload, status, created_at FROM queue_jobs_old"
+    )
+    conn.execute("DROP TABLE queue_jobs_old")
 
 
 def _existing_tables(conn: sqlite3.Connection) -> set[str]:
@@ -211,6 +244,8 @@ def init_db() -> None:
         _ensure_hidden_kind_column(conn)
         _ensure_group_icon_column(conn)
         _ensure_conversations_table(conn)
+        _ensure_pdf_path_column(conn)
+        _ensure_queue_jobs_allows_extract_pdf(conn)
         _recover_orphaned_processing_jobs(conn)
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
