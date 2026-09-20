@@ -32,9 +32,16 @@ def delete_message(conversation_id: int, message_id: int) -> Response:
         if row is None:
             raise HTTPException(status_code=404, detail="message not found")
 
+        # Best-effort cleanup: a locked/permission-denied file must not abort the delete —
+        # the DB row going away is what matters (it's what leaves the LLM context), losing
+        # an orphaned file on disk is a much smaller problem than a message that refuses
+        # to delete because of an unrelated filesystem error.
         for path_value in (row["image_path"], row["pdf_path"]):
             if path_value:
-                Path(path_value).unlink(missing_ok=True)
+                try:
+                    Path(path_value).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
         conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
         conn.commit()
@@ -43,7 +50,7 @@ def delete_message(conversation_id: int, message_id: int) -> Response:
     return Response(status_code=204)
 ```
 
-`Path.unlink(missing_ok=True)` cobre o caso do arquivo já não existir mais em disco (não falha a exclusão da mensagem por causa disso). Nenhuma outra tabela referencia `messages.id` como chave estrangeira (`queue_jobs` guarda `message_id` só dentro do JSON de `payload`, sem `FOREIGN KEY`), então apagar a linha não quebra integridade referencial nem levanta erro de `sqlite3.IntegrityError`.
+`Path.unlink(missing_ok=True)` cobre o caso do arquivo já não existir mais em disco. O `try/except OSError` ao redor (acrescentado durante a revisão de código da implementação) cobre o caso de um arquivo travado/sem permissão — sem isso, essa exceção subiria e a linha da mensagem sobreviveria no banco referenciando um arquivo que já pode ter sumido parcialmente; é mais seguro garantir que a exclusão da mensagem sempre completa. Nenhuma outra tabela referencia `messages.id` como chave estrangeira (`queue_jobs` guarda `message_id` só dentro do JSON de `payload`, sem `FOREIGN KEY`), então apagar a linha não quebra integridade referencial nem levanta erro de `sqlite3.IntegrityError`.
 
 Efeitos colaterais aceitos e já cobertos pelo comportamento existente do sistema, sem código extra:
 - Se a mensagem excluída tiver um job `agent_turn`/`describe_image`/`extract_pdf` ainda `pending`/`processing` referenciando-a, o job continua rodando normalmente (ele só usa `pdf_path`/`image_path` do payload, não consulta a linha da mensagem) e insere sua própria mensagem nova ao terminar — sem erro.
@@ -111,17 +118,20 @@ Em `app/static/index.html`, dentro de `#context-panel` (depois do bloco "Ferrame
 </div>
 ```
 
-Em `app/static/app.js`, nova função chamada ao trocar de conversa e depois de qualquer exclusão:
+Em `app/static/app.js`, nova função chamada ao trocar de conversa e depois de qualquer exclusão. **Nota pós-implementação:** durante a revisão de código, duas correções foram aplicadas em relação ao rascunho original: (1) `search_result` também é `hidden=1`, mas já aparece como chip na timeline (via a exceção em `_VISIBLE_MESSAGES_WHERE`) — o filtro cliente precisa excluí-lo explicitamente, senão duplica; (2) a função precisa do mesmo guard de `pollGeneration` que `pollMessages` já usa, senão uma troca de conversa rápida pode deixar uma resposta antiga sobrescrever o painel da conversa nova (com botões de apagar fechando sobre IDs da conversa errada). O código abaixo já reflete a versão final corrigida:
 
 ```javascript
 async function refreshHiddenMessages() {
   if (!state.activeConversationId) return;
+  const generation = state.pollGeneration;
+  const conversationId = state.activeConversationId;
   const messages = await api(
-    `/api/conversations/${state.activeConversationId}/messages?include_hidden=true`
+    `/api/conversations/${conversationId}/messages?include_hidden=true`
   );
+  if (generation !== state.pollGeneration) return;
   const container = document.getElementById("hidden-messages-list");
   container.innerHTML = "";
-  const hidden = messages.filter((m) => m.hidden);
+  const hidden = messages.filter((m) => m.hidden && m.hidden_kind !== "search_result");
   if (hidden.length === 0) {
     container.textContent = "Nenhuma.";
     return;
@@ -144,8 +154,8 @@ async function refreshHiddenMessages() {
     deleteBtn.title = "Apagar mensagem";
     deleteBtn.onclick = async () => {
       if (!confirm("Apagar esta mensagem oculta? Ela some do contexto dos agentes permanentemente.")) return;
-      await api(`/api/conversations/${state.activeConversationId}/messages/${message.id}`, { method: "DELETE" });
-      refreshHiddenMessages();
+      await api(`/api/conversations/${conversationId}/messages/${message.id}`, { method: "DELETE" });
+      await refreshHiddenMessages();
     };
     item.appendChild(deleteBtn);
 

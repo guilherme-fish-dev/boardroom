@@ -379,7 +379,9 @@ async function refreshHiddenMessages() {
   if (generation !== state.pollGeneration) return;
   const container = document.getElementById("hidden-messages-list");
   container.innerHTML = "";
-  const hidden = messages.filter((m) => m.hidden);
+  // search_result is hidden=1 but already shown as a chip in the main timeline
+  // (see _VISIBLE_MESSAGES_WHERE) — excluding it here avoids showing it twice.
+  const hidden = messages.filter((m) => m.hidden && m.hidden_kind !== "search_result");
   if (hidden.length === 0) {
     container.textContent = "Nenhuma.";
     return;
