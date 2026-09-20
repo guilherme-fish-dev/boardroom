@@ -1,5 +1,6 @@
 import io
 
+import pytest
 from pypdf import PdfReader, PdfWriter
 
 from app.pdf_extract import extract_text
@@ -110,8 +111,5 @@ def test_extract_text_raises_for_corrupt_file(tmp_path):
     pdf_path = tmp_path / "corrupt.pdf"
     pdf_path.write_bytes(b"not a real pdf file, just random bytes 12345")
 
-    try:
+    with pytest.raises(Exception):
         extract_text(str(pdf_path))
-        assert False, "expected an exception for a corrupt PDF"
-    except Exception:
-        pass
