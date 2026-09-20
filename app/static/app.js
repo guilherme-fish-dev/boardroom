@@ -611,13 +611,17 @@ async function pollMessages() {
     // A newer selectConversation happened while this fetch was in flight — discard
     // this stale response instead of rendering another conversation's messages here.
     if (generation !== state.pollGeneration) return;
+    const list = document.getElementById("message-list");
+    // Captura o estado do scroll antes de inserir mensagens novas, já que a
+    // inserção altera scrollHeight e invalidaria essa checagem depois.
+    const wasNearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
     for (const message of messages) {
       renderMessage(message);
       state.lastMessageId = message.id;
     }
     updateMessageListEmptyState();
-    if (messages.length > 0) {
-      document.getElementById("message-list").scrollTop = 1e9;
+    if (messages.length > 0 && wasNearBottom) {
+      list.scrollTop = 1e9;
     }
   } finally {
     if (generation === state.pollGeneration) state.pollInFlight = false;
