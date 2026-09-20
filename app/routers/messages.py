@@ -392,9 +392,16 @@ def delete_message(conversation_id: int, message_id: int) -> Response:
         if row is None:
             raise HTTPException(status_code=404, detail="message not found")
 
+        # Best-effort cleanup: a locked/permission-denied file must not abort the delete —
+        # the DB row going away is what matters (it's what leaves the LLM context), losing
+        # an orphaned file on disk is a much smaller problem than a message that refuses
+        # to delete because of an unrelated filesystem error.
         for path_value in (row["image_path"], row["pdf_path"]):
             if path_value:
-                Path(path_value).unlink(missing_ok=True)
+                try:
+                    Path(path_value).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
         conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
         conn.commit()
