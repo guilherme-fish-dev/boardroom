@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -682,3 +683,135 @@ def test_uploaded_pdf_is_extracted_end_to_end_without_mocking(db, tmp_path, monk
 
     assert len(hidden_messages) == 1
     assert hidden_messages[0]["content"] == "Relatório trimestral\nReceita subiu 12%"
+
+
+def test_delete_message_removes_it(db):
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+    message = client.post(
+        f"/api/conversations/{conversation['id']}/messages", json={"content": "apague-me"}
+    ).json()
+
+    resp = client.delete(f"/api/conversations/{conversation['id']}/messages/{message['id']}")
+    assert resp.status_code == 204
+
+    remaining = client.get(f"/api/conversations/{conversation['id']}/messages").json()
+    assert message["id"] not in [m["id"] for m in remaining]
+
+    remaining_with_hidden = client.get(
+        f"/api/conversations/{conversation['id']}/messages", params={"include_hidden": "true"}
+    ).json()
+    assert message["id"] not in [m["id"] for m in remaining_with_hidden]
+
+
+def test_delete_message_404_for_unknown_message(db):
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+
+    resp = client.delete(f"/api/conversations/{conversation['id']}/messages/9999")
+    assert resp.status_code == 404
+
+
+def test_delete_message_404_when_message_belongs_to_other_conversation(db):
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+    other_conv = client.post(
+        f"/api/groups/{group['id']}/conversations", json={"name": "outra"}
+    ).json()
+    message = client.post(
+        f"/api/conversations/{conversation['id']}/messages", json={"content": "oi"}
+    ).json()
+
+    resp = client.delete(f"/api/conversations/{other_conv['id']}/messages/{message['id']}")
+    assert resp.status_code == 404
+
+    # a mensagem continua existindo na conversa certa
+    remaining = client.get(f"/api/conversations/{conversation['id']}/messages").json()
+    assert message["id"] in [m["id"] for m in remaining]
+
+
+def test_delete_message_removes_attached_image_file(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+
+    files = {"image": ("cat.png", b"fake-png-bytes", "image/png")}
+    message = client.post(
+        f"/api/conversations/{conversation['id']}/messages/image",
+        data={"content": "foto"},
+        files=files,
+    ).json()
+    image_path = tmp_path / "uploads" / Path(message["image_path"]).name
+    assert image_path.exists()
+
+    resp = client.delete(f"/api/conversations/{conversation['id']}/messages/{message['id']}")
+    assert resp.status_code == 204
+    assert not image_path.exists()
+
+
+def test_delete_message_removes_attached_pdf_file(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+
+    files = {"pdf": ("relatorio.pdf", b"fake-pdf-bytes", "application/pdf")}
+    message = client.post(
+        f"/api/conversations/{conversation['id']}/messages/pdf",
+        data={"content": "relatorio"},
+        files=files,
+    ).json()
+    pdf_path = tmp_path / "uploads" / Path(message["pdf_path"]).name
+    assert pdf_path.exists()
+
+    resp = client.delete(f"/api/conversations/{conversation['id']}/messages/{message['id']}")
+    assert resp.status_code == 204
+    assert not pdf_path.exists()
+
+
+def test_delete_message_without_attachment_does_not_error(db):
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+    message = client.post(
+        f"/api/conversations/{conversation['id']}/messages", json={"content": "texto puro"}
+    ).json()
+
+    resp = client.delete(f"/api/conversations/{conversation['id']}/messages/{message['id']}")
+    assert resp.status_code == 204
+
+
+def test_list_messages_excludes_hidden_by_default(db):
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) "
+            "VALUES (?, 'system', ?, 1, 'pdf_extract')",
+            (conversation["id"], "texto extraido oculto"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    visible = client.get(f"/api/conversations/{conversation['id']}/messages").json()
+    assert "texto extraido oculto" not in [m["content"] for m in visible]
+
+
+def test_list_messages_include_hidden_returns_hidden_messages(db):
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) "
+            "VALUES (?, 'system', ?, 1, 'pdf_extract')",
+            (conversation["id"], "texto extraido oculto"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with_hidden = client.get(
+        f"/api/conversations/{conversation['id']}/messages", params={"include_hidden": "true"}
+    ).json()
+    assert "texto extraido oculto" in [m["content"] for m in with_hidden]

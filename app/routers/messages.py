@@ -4,7 +4,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -157,17 +157,20 @@ _VISIBLE_MESSAGES_WHERE = "conversation_id = ? AND (hidden = 0 OR hidden_kind = 
 
 
 @router.get("", response_model=list[MessageOut])
-def list_messages(conversation_id: int, since_id: int | None = None) -> list[MessageOut]:
+def list_messages(
+    conversation_id: int, since_id: int | None = None, include_hidden: bool = False
+) -> list[MessageOut]:
     conn = get_connection()
     try:
+        where = "conversation_id = ?" if include_hidden else _VISIBLE_MESSAGES_WHERE
         if since_id is None:
             rows = conn.execute(
-                f"SELECT * FROM messages WHERE {_VISIBLE_MESSAGES_WHERE} ORDER BY id",
+                f"SELECT * FROM messages WHERE {where} ORDER BY id",
                 (conversation_id,),
             ).fetchall()
         else:
             rows = conn.execute(
-                f"SELECT * FROM messages WHERE {_VISIBLE_MESSAGES_WHERE} AND id > ? ORDER BY id",
+                f"SELECT * FROM messages WHERE {where} AND id > ? ORDER BY id",
                 (conversation_id, since_id),
             ).fetchall()
     finally:
@@ -376,3 +379,25 @@ def get_message_pdf(conversation_id: int, message_id: int) -> FileResponse:
     if row is None or row["pdf_path"] is None:
         raise HTTPException(status_code=404, detail="pdf not found")
     return FileResponse(row["pdf_path"], media_type="application/pdf")
+
+
+@router.delete("/{message_id}", status_code=204)
+def delete_message(conversation_id: int, message_id: int) -> Response:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT image_path, pdf_path FROM messages WHERE id = ? AND conversation_id = ?",
+            (message_id, conversation_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="message not found")
+
+        for path_value in (row["image_path"], row["pdf_path"]):
+            if path_value:
+                Path(path_value).unlink(missing_ok=True)
+
+        conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return Response(status_code=204)
