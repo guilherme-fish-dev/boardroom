@@ -1699,3 +1699,43 @@ def test_process_agent_turn_circuit_breaker_blocks_stray_future_mention(db, monk
 
     assert job["status"] == "done"
     assert ana_messages == []
+
+
+def test_deleting_hidden_message_removes_it_from_agent_context(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob olha o pdf')",
+        (conversation_id,),
+    )
+    cur = conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) "
+        "VALUES (?, 'system', ?, 1, 'pdf_extract')",
+        (conversation_id, "conteudo sensivel que deve sumir"),
+    )
+    pdf_message_id = cur.lastrowid
+    conn.commit()
+
+    # Simula o usuário apagando a mensagem oculta antes do agente responder
+    conn.execute("DELETE FROM messages WHERE id = ?", (pdf_message_id,))
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "ok",
+    )
+
+    process_next_job()
+
+    contents = [m["content"] for m in calls[0]["messages"]]
+    assert not any("conteudo sensivel que deve sumir" in c for c in contents)
