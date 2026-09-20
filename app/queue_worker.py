@@ -11,6 +11,7 @@ import httpx
 from app.db import DEFAULT_SETTINGS, get_connection
 from app.llm_client import chat_completion
 from app.mentions import extract_mentions
+from app.pdf_extract import extract_text
 from app.routers.messages import enqueue_mentions
 from app.web_search import web_search
 
@@ -205,6 +206,22 @@ def _process_describe_image(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
 
 
+PDF_NO_TEXT_WARNING = "Nenhum texto extraível encontrado neste PDF (pode ser um documento escaneado)."
+
+
+def _process_extract_pdf(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
+    payload = json.loads(job["payload"])
+    text = extract_text(payload["pdf_path"])
+
+    content = text if text else PDF_NO_TEXT_WARNING
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) "
+        "VALUES (?, 'system', ?, 1, 'pdf_extract')",
+        (job["conversation_id"], content),
+    )
+    conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
+
+
 def _find_recent_image(conn: sqlite3.Connection, conversation_id: int) -> str | None:
     row = conn.execute(
         "SELECT image_path FROM messages WHERE conversation_id = ? AND image_path IS NOT NULL "
@@ -366,6 +383,8 @@ def process_next_job() -> bool:
         try:
             if job["job_type"] == "describe_image":
                 _process_describe_image(conn, job)
+            elif job["job_type"] == "extract_pdf":
+                _process_extract_pdf(conn, job)
             else:
                 _process_agent_turn(conn, job)
             conn.commit()

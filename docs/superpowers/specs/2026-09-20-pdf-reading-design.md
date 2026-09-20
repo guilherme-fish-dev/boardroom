@@ -1,7 +1,7 @@
 # Leitura de PDF pelos agentes
 
 Data: 2026-09-20
-Status: Aprovado para planejamento
+Status: Implementado
 
 ## Contexto e motivação
 
@@ -66,7 +66,9 @@ def _ensure_pdf_path_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE messages ADD COLUMN pdf_path TEXT")
 ```
 
-**2. `queue_jobs.job_type` precisa aceitar `'extract_pdf'`** — hoje o `CHECK` da coluna só permite `('agent_turn','describe_image')`. SQLite não permite `ALTER TABLE` para modificar um `CHECK` existente, então a migração precisa reconstruir a tabela — o projeto já tem esse padrão em `_migrate_messages_to_conversation_id`:
+**2. `queue_jobs.job_type` precisa aceitar `'extract_pdf'`** — hoje o `CHECK` da coluna só permite `('agent_turn','describe_image')`. SQLite não permite `ALTER TABLE` para modificar um `CHECK` existente, então a migração precisa reconstruir a tabela — o projeto já tem esse padrão em `_migrate_messages_to_conversation_id`.
+
+> **Nota pós-implementação:** a primeira versão desta migração (mostrada abaixo apenas como esboço inicial) usava o nome de tabela temporária genérico `queue_jobs_old`, que colidia com o nome já usado por outra migração do arquivo (`_migrate_queue_jobs_to_conversation_id`) e não era resumível após um crash no meio do processo — um `ALTER TABLE ... RENAME TO` interrompido podia travar o boot permanentemente e perder o job em trânsito. Isso foi encontrado e corrigido durante a revisão de código da implementação (commit `408ff4e`). **A versão final e correta está em `app/db.py`, função `_ensure_queue_jobs_allows_extract_pdf`** — usa o nome exclusivo `queue_jobs_pdf_migration_old` e reverifica seu próprio progresso em cada etapa (rename só se a tabela temporária ainda não existe, criação só se `queue_jobs` ainda não existe, cópia com `INSERT OR IGNORE`), com um docstring detalhado explicando o raciocínio. Consulte o código-fonte para a versão real; o esboço abaixo documenta apenas a intenção original.
 
 ```python
 def _ensure_queue_jobs_allows_extract_pdf(conn: sqlite3.Connection) -> None:
@@ -97,7 +99,7 @@ def _ensure_queue_jobs_allows_extract_pdf(conn: sqlite3.Connection) -> None:
 
 A `SCHEMA` (definição para bancos novos) também é atualizada para já incluir `'extract_pdf'` no `CHECK`.
 
-Ambas as funções são chamadas em `init_db()`, junto das migrações já existentes (`_ensure_hidden_kind_column`, `_ensure_group_icon_column`, etc.), antes de `_recover_orphaned_processing_jobs`.
+Ambas as funções são chamadas em `init_db()`. **Ordem real de chamada (corrigida durante a implementação):** ao contrário do que um esboço inicial poderia sugerir, as duas novas migrações precisam rodar DEPOIS de `_ensure_conversations_table` (não antes) — essa outra migração é quem transforma bancos legados baseados em `group_id` para o formato baseado em `conversation_id`, e a reconstrução de `queue_jobs` desta feature depende de a coluna `conversation_id` já existir. Rodar antes quebraria a migração de bancos muito antigos. A ordem final em `init_db()` é: `_ensure_hidden_kind_column`, `_ensure_group_icon_column`, `_ensure_conversations_table`, `_ensure_pdf_path_column`, `_ensure_queue_jobs_allows_extract_pdf`, `_recover_orphaned_processing_jobs`.
 
 ## Endpoint de upload: `POST .../messages/pdf`
 
@@ -275,5 +277,9 @@ Backend:
 `tests/test_messages_api.py`: `POST .../messages/pdf` com um PDF válido cria mensagem com `pdf_path` preenchido e um job `extract_pdf`; rejeita `content_type` que não seja `application/pdf` (415); rejeita arquivo maior que `MAX_PDF_SIZE_BYTES` (413); 404 para conversa inexistente; `GET .../messages/{id}/pdf` retorna os bytes do arquivo salvo; 404 quando a mensagem não tem PDF.
 
 `tests/test_queue_worker.py`: `_process_extract_pdf` com `extract_text` mockado retornando um texto normal — mensagem oculta criada com `hidden_kind='pdf_extract'` e o texto exato, job termina `done`; `extract_text` mockado retornando string vazia — mensagem oculta criada com o texto de `PDF_NO_TEXT_WARNING`; `extract_text` mockado levantando exceção — job termina `error` e mensagem de sistema visível é criada com o erro (mesmo comportamento genérico já testado para outras falhas de job, ex. `test_process_next_job_rolls_back_partial_work_on_error`); texto extraído entra no histórico de um agente comum via `_build_history` (sem exclusão, ao contrário de `image_description`).
+
+`tests/test_db.py` ganhou também `test_init_db_resumes_extract_pdf_migration_interrupted_after_rename`, simulando um crash logo após o `RENAME` da migração de `queue_jobs` (tabela temporária já criada com um job dentro, `queue_jobs` novo ainda não existe) e confirmando que rodar `init_db()` de novo completa a migração sem perder o job nem lançar exceção — adicionado durante a revisão de código depois que o bug de robustez descrito na nota da seção anterior foi encontrado.
+
+`tests/test_messages_api.py` ganhou também `test_uploaded_pdf_is_extracted_end_to_end_without_mocking`: sobe um PDF real (gerado com o mesmo helper de `test_pdf_extract.py`) via HTTP, deixa `process_next_job()` rodar de verdade (sem mockar `extract_text`), e confirma que a mensagem oculta final contém o texto extraído — cobre a integração completa (upload → caminho em disco → extração real) que os demais testes, ao mockar `extract_text` ou o `pdf_path`, não exercitam.
 
 Sem teste de frontend automatizado (o projeto não tem suíte de frontend hoje — mesma situação da feature de busca web e do `@all`); verificação manual via `preview_start` cobre a UI.

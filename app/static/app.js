@@ -492,6 +492,14 @@ function renderMessage(message) {
     bubble.appendChild(img);
   }
 
+  if (message.pdf_path) {
+    const link = document.createElement("a");
+    link.href = `/api/conversations/${message.conversation_id}/messages/${message.id}/pdf`;
+    link.textContent = "📄 PDF anexado";
+    link.target = "_blank";
+    bubble.appendChild(link);
+  }
+
   document.getElementById("message-list").appendChild(row);
 }
 
@@ -569,7 +577,9 @@ function renderPendingIndicator(pending) {
   const labels = pending.map((job) =>
     job.job_type === "describe_image"
       ? "Analisando a imagem enviada…"
-      : `${job.agent_name || "agente"} está respondendo…`
+      : job.job_type === "extract_pdf"
+        ? "Lendo o PDF enviado…"
+        : `${job.agent_name || "agente"} está respondendo…`
   );
   el.textContent = [...new Set(labels)].join(" · ");
   stopBtn.classList.remove("hidden");
@@ -922,11 +932,17 @@ document.getElementById("image-input").addEventListener("change", (e) => {
   document.getElementById("image-filename").textContent = file ? file.name : "";
 });
 
+document.getElementById("pdf-input").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  document.getElementById("pdf-filename").textContent = file ? file.name : "";
+});
+
 document.getElementById("message-form").onsubmit = async (e) => {
   e.preventDefault();
   if (!state.activeConversationId) return;
   const textInput = document.getElementById("message-input");
   const imageInput = document.getElementById("image-input");
+  const pdfInput = document.getElementById("pdf-input");
 
   if (imageInput.files.length > 0) {
     const form = new FormData();
@@ -935,6 +951,13 @@ document.getElementById("message-form").onsubmit = async (e) => {
     await api(`/api/conversations/${state.activeConversationId}/messages/image`, { method: "POST", body: form });
     imageInput.value = "";
     document.getElementById("image-filename").textContent = "";
+  } else if (pdfInput.files.length > 0) {
+    const form = new FormData();
+    form.append("content", textInput.value);
+    form.append("pdf", pdfInput.files[0]);
+    await api(`/api/conversations/${state.activeConversationId}/messages/pdf`, { method: "POST", body: form });
+    pdfInput.value = "";
+    document.getElementById("pdf-filename").textContent = "";
   } else {
     await api(`/api/conversations/${state.activeConversationId}/messages`, {
       method: "POST",

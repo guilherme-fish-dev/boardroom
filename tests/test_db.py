@@ -397,3 +397,145 @@ def test_init_db_group_icon_migration_is_idempotent(db):
     finally:
         conn.close()
     assert "icon" in columns
+
+
+def test_init_db_adds_pdf_path_column_to_messages(db):
+    conn = get_connection()
+    try:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    finally:
+        conn.close()
+    assert "pdf_path" in columns
+
+
+def test_init_db_migrates_queue_jobs_check_to_allow_extract_pdf(tmp_path, monkeypatch):
+    from app.db import init_db
+
+    db_file = tmp_path / "old.db"
+    monkeypatch.setenv("BOARDROOM_DB_PATH", str(db_file))
+
+    conn = get_connection()
+    conn.executescript(
+        """
+        CREATE TABLE groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            icon TEXT NOT NULL DEFAULT '💬',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE queue_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            agent_id INTEGER,
+            job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image')),
+            priority INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+    conn.execute("INSERT INTO groups (id, name) VALUES (1, 'investidores')")
+    conn.execute("INSERT INTO conversations (id, group_id, name) VALUES (1, 1, 'Geral')")
+    conn.execute(
+        "INSERT INTO queue_jobs (id, conversation_id, agent_id, job_type, priority, payload, status) "
+        "VALUES (1, 1, NULL, 'describe_image', 0, '{}', 'done')"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db()
+
+    conn = get_connection()
+    try:
+        old_job = conn.execute("SELECT * FROM queue_jobs WHERE id = 1").fetchone()
+        cur = conn.execute(
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+            "VALUES (1, NULL, 'extract_pdf', 0, '{}')"
+        )
+        conn.commit()
+        new_job = conn.execute("SELECT * FROM queue_jobs WHERE id = ?", (cur.lastrowid,)).fetchone()
+    finally:
+        conn.close()
+
+    assert old_job["job_type"] == "describe_image"
+    assert old_job["status"] == "done"
+    assert new_job["job_type"] == "extract_pdf"
+
+
+def test_init_db_resumes_extract_pdf_migration_interrupted_after_rename(tmp_path, monkeypatch):
+    """Simulates a crash between the rename+create step and the copy+drop step of
+    _ensure_queue_jobs_allows_extract_pdf (ALTER TABLE ... RENAME TO commits immediately in
+    SQLite and can't be rolled back, so this is a real state the migration must be able to
+    resume from without losing data). Also guards against a regression where this migration
+    reused the generic 'queue_jobs_old' name shared with _migrate_queue_jobs_to_conversation_id
+    — here queue_jobs is already on conversation_id (no group_id), so if the crash-recovery
+    table were misidentified as that other migration's leftover, resuming would raise
+    'no such column: j.group_id' instead of finishing cleanly."""
+    from app.db import get_connection, init_db
+
+    db_file = tmp_path / "interrupted_pdf.db"
+    monkeypatch.setenv("BOARDROOM_DB_PATH", str(db_file))
+
+    conn = get_connection()
+    conn.executescript(
+        """
+        CREATE TABLE groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            icon TEXT NOT NULL DEFAULT '💬',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE queue_jobs_pdf_migration_old (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            agent_id INTEGER,
+            job_type TEXT NOT NULL CHECK (job_type IN ('agent_turn','describe_image')),
+            priority INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','error')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+    conn.execute("INSERT INTO groups (id, name) VALUES (1, 'investidores')")
+    conn.execute("INSERT INTO conversations (id, group_id, name) VALUES (1, 1, 'Geral')")
+    conn.execute(
+        "INSERT INTO queue_jobs_pdf_migration_old "
+        "(id, conversation_id, agent_id, job_type, priority, payload, status) "
+        "VALUES (1, 1, NULL, 'describe_image', 0, '{}', 'done')"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db()
+
+    conn = get_connection()
+    try:
+        tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        old_job = conn.execute("SELECT * FROM queue_jobs WHERE id = 1").fetchone()
+        cur = conn.execute(
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+            "VALUES (1, NULL, 'extract_pdf', 0, '{}')"
+        )
+        conn.commit()
+        new_job = conn.execute("SELECT * FROM queue_jobs WHERE id = ?", (cur.lastrowid,)).fetchone()
+    finally:
+        conn.close()
+
+    assert "queue_jobs_pdf_migration_old" not in tables
+    assert old_job["job_type"] == "describe_image"
+    assert old_job["status"] == "done"
+    assert new_job["job_type"] == "extract_pdf"

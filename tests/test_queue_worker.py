@@ -1303,3 +1303,137 @@ def test_process_agent_turn_prompt_includes_wait_user_and_anti_repeat_instructio
     assert "NUNCA repita as perguntas" in system_msg
     assert "NÃO responda apenas para dizer que está aguardando" in system_msg
 
+
+def test_process_next_job_extract_pdf_saves_hidden_message_and_marks_done(db, monkeypatch, tmp_path):
+    pdf_path = tmp_path / "fake.pdf"
+    pdf_path.write_bytes(b"fake-pdf-bytes")
+
+    conn = get_connection()
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, NULL, 'extract_pdf', 0, ?)",
+        (conversation_id, json.dumps({"pdf_path": str(pdf_path), "message_id": 1})),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.queue_worker.extract_text", lambda path, **kwargs: "texto extraído do pdf")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        hidden_messages = conn.execute(
+            "SELECT * FROM messages WHERE hidden = 1 AND hidden_kind = 'pdf_extract'"
+        ).fetchall()
+        job = conn.execute("SELECT * FROM queue_jobs").fetchone()
+    finally:
+        conn.close()
+
+    assert len(hidden_messages) == 1
+    assert hidden_messages[0]["content"] == "texto extraído do pdf"
+    assert job["status"] == "done"
+
+
+def test_process_next_job_extract_pdf_with_no_text_saves_warning_message(db, monkeypatch, tmp_path):
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"fake-pdf-bytes")
+
+    conn = get_connection()
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, NULL, 'extract_pdf', 0, ?)",
+        (conversation_id, json.dumps({"pdf_path": str(pdf_path), "message_id": 1})),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.queue_worker.extract_text", lambda path, **kwargs: "")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        hidden_messages = conn.execute(
+            "SELECT * FROM messages WHERE hidden = 1 AND hidden_kind = 'pdf_extract'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(hidden_messages) == 1
+    assert hidden_messages[0]["content"] == "Nenhum texto extraível encontrado neste PDF (pode ser um documento escaneado)."
+
+
+def test_process_next_job_extract_pdf_failure_marks_job_error(db, monkeypatch, tmp_path):
+    pdf_path = tmp_path / "corrupt.pdf"
+    pdf_path.write_bytes(b"not a pdf")
+
+    conn = get_connection()
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, NULL, 'extract_pdf', 0, ?)",
+        (conversation_id, json.dumps({"pdf_path": str(pdf_path), "message_id": 1})),
+    )
+    conn.commit()
+    conn.close()
+
+    def _raise(path, **kwargs):
+        raise RuntimeError("pdf inválido")
+
+    monkeypatch.setattr("app.queue_worker.extract_text", _raise)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM queue_jobs").fetchone()
+        system_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'system' AND hidden = 0"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert job["status"] == "error"
+    assert len(system_messages) == 1
+    assert "pdf inválido" in system_messages[0]["content"]
+
+
+def test_process_next_job_agent_turn_history_includes_pdf_extract_text(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob olha esse pdf')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content, hidden, hidden_kind) "
+        "VALUES (?, 'system', ?, 1, 'pdf_extract')",
+        (conversation_id, "conteúdo extraído do pdf de teste"),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "vi o pdf",
+    )
+
+    process_next_job()
+
+    contents = [m["content"] for m in calls[0]["messages"]]
+    assert any("conteúdo extraído do pdf de teste" in c for c in contents)
