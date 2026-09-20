@@ -4,7 +4,9 @@ from fastapi.testclient import TestClient
 
 from app.db import get_connection
 from app.main import create_app
+from app.queue_worker import process_next_job
 from app.routers.messages import _pair_exchange_count
+from test_pdf_extract import _minimal_pdf_bytes
 
 
 def make_client(db):
@@ -553,3 +555,35 @@ def test_get_message_pdf_404_when_no_pdf(db):
 
     resp = client.get(f"/api/conversations/{conversation['id']}/messages/{message['id']}/pdf")
     assert resp.status_code == 404
+
+
+def test_uploaded_pdf_is_extracted_end_to_end_without_mocking(db, tmp_path, monkeypatch):
+    """Fim a fim, sem mockar extract_text: sobe um PDF real (gerado com o mesmo helper de
+    tests/test_pdf_extract.py), deixa o job extract_pdf rodar de verdade contra o arquivo
+    salvo em disco, e confirma que o texto extraído aparece como mensagem oculta. Os outros
+    testes de endpoint e de worker mockam extract_text ou o pdf_path — este é o único que
+    exercita a integração real entre upload, caminho do arquivo em disco, e extração."""
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+
+    pdf_bytes = _minimal_pdf_bytes(["Relatório trimestral", "Receita subiu 12%"])
+    files = {"pdf": ("relatorio.pdf", pdf_bytes, "application/pdf")}
+    client.post(
+        f"/api/conversations/{conversation['id']}/messages/pdf",
+        data={"content": "segue o relatório"},
+        files=files,
+    )
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        hidden_messages = conn.execute(
+            "SELECT * FROM messages WHERE hidden = 1 AND hidden_kind = 'pdf_extract'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(hidden_messages) == 1
+    assert hidden_messages[0]["content"] == "Relatório trimestral\nReceita subiu 12%"
