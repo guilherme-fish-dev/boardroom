@@ -4,6 +4,8 @@ __pycache__/
 venv/
 *.db
 /data/uploads/
+/data/piper-voices/
+/data/tts_cache/
 .env
 node_modules/
 

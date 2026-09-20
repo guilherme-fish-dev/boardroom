@@ -109,7 +109,7 @@ def _group_roster_content(other_members: list[sqlite3.Row]) -> str:
     if not other_members:
         return ""
     lines = [
-        f"- {row['name']}: {row['subtitle']}" if row["subtitle"] else f"- {row['name']}"
+        f"- @{row['name']}: {row['subtitle']}" if row["subtitle"] else f"- @{row['name']}"
         for row in other_members
     ]
     return "Outros agentes deste grupo e suas funções:\n" + "\n".join(lines)

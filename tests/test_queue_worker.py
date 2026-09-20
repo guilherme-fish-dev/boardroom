@@ -764,7 +764,9 @@ def test_process_next_job_system_prompt_lists_other_group_agents_for_mentioning(
 
     process_next_job()
 
-    system_content = calls[0]["messages"][0]["content"]
+    # Índice 1: a lista de membros do grupo (roster) e as instruções de menção vivem numa
+    # mensagem de sistema própria, separada da persona (mensagem 0) — ver _build_history.
+    system_content = calls[0]["messages"][1]["content"]
     assert "@alice" in system_content
     assert "mencionar outros agentes" in system_content
 
@@ -1087,6 +1089,7 @@ def test_build_history_truncates_and_adds_system_note(db):
         conversation_id,
         "Você é um assistente.",
         agent_id,
+        "carlos",
         max_messages=10,
     )
     conn.close()
@@ -1467,7 +1470,7 @@ def test_process_next_job_mention_instructions_explain_when_to_use_at_sign(db, m
 
     process_next_job()
 
-    system_content = calls[0]["messages"][0]["content"]
+    system_content = calls[0]["messages"][1]["content"]
     assert "SOMENTE quando" in system_content
     assert "SEM o @" in system_content
     assert "@Ana, pode confirmar esse número" in system_content

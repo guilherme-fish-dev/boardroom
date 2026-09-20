@@ -277,6 +277,20 @@ body {
 }
 .message-delete-btn:hover { color: var(--danger); }
 
+.message-listen-btn {
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 0;
+  margin-left: 8px;
+  font-size: 12px;
+  line-height: 1;
+  transition: color 150ms ease;
+}
+.message-listen-btn:hover { color: var(--accent); }
+.message-listen-btn:disabled { cursor: default; opacity: 0.6; }
+
 #add-member-select {
   width: 100%;
   background: var(--surface);

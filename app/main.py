@@ -10,7 +10,7 @@ from starlette.types import Scope
 
 from app.db import init_db
 from app.queue_worker import process_next_job
-from app.routers import agents, conversations, groups, messages, models, settings
+from app.routers import agents, conversations, groups, messages, models, settings, tts
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(settings.router)
     app.include_router(messages.router)
     app.include_router(models.router)
+    app.include_router(tts.router)
 
     @app.on_event("startup")
     async def _start_worker() -> None:

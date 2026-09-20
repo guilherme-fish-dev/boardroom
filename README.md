@@ -23,6 +23,18 @@ uvicorn app.main:app --reload --port 8000
 
 Abra `http://localhost:8000`.
 
+### Voz (opcional)
+
+Pra ouvir as mensagens em voz alta, baixe a voz em português do
+[Piper](https://github.com/OHF-Voice/piper1-gpl) uma vez:
+
+```bash
+python -m piper.download_voices --download-dir ./data/piper-voices pt_BR-faber-medium
+```
+
+Sem esse modelo baixado, o botão de ouvir simplesmente não aparece — o resto do app
+funciona normalmente.
+
 Antes de usar:
 1. Vá em **Configurações** e ajuste a URL base do llama-swap e o modelo de visão padrão
    (o alias exatamente como configurado no `llama-swap`).

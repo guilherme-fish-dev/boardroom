@@ -10,6 +10,8 @@ from pydantic import BaseModel
 
 from app.db import get_connection
 from app.mentions import extract_mentions
+from app.tts import is_available as tts_is_available
+from app.tts import purge_stale_cache, synthesize_wav
 
 router = APIRouter(prefix="/api/conversations/{conversation_id}/messages", tags=["messages"])
 
@@ -306,6 +308,38 @@ async def post_image_message(
     return _row_to_message(row)
 
 
+def _tts_cache_dir() -> Path:
+    path = Path(os.environ.get("BOARDROOM_TTS_CACHE_DIR", "./data/tts_cache"))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@router.get("/{message_id}/audio")
+def get_message_audio(conversation_id: int, message_id: int) -> Response:
+    if not tts_is_available():
+        raise HTTPException(status_code=503, detail="voz não configurada no servidor")
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT content FROM messages WHERE id = ? AND conversation_id = ?",
+            (message_id, conversation_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="message not found")
+
+    cache_dir = _tts_cache_dir()
+    purge_stale_cache(cache_dir)
+    cache_path = cache_dir / f"{message_id}.wav"
+    if not cache_path.exists():
+        if not row["content"].strip():
+            raise HTTPException(status_code=422, detail="mensagem sem texto para ler")
+        cache_path.write_bytes(synthesize_wav(row["content"]))
+    return Response(content=cache_path.read_bytes(), media_type="audio/wav")
+
+
 @router.get("/{message_id}/image")
 def get_message_image(conversation_id: int, message_id: int) -> FileResponse:
     conn = get_connection()
@@ -402,6 +436,10 @@ def delete_message(conversation_id: int, message_id: int) -> Response:
                     Path(path_value).unlink(missing_ok=True)
                 except OSError:
                     pass
+        try:
+            (_tts_cache_dir() / f"{message_id}.wav").unlink(missing_ok=True)
+        except OSError:
+            pass
 
         conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
         conn.commit()

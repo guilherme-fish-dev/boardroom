@@ -13,6 +13,7 @@ const state = {
   editingAgentId: null,
   groupSearchTerm: "",
   editingGroupId: null,
+  ttsAvailable: false,
 };
 
 const AGENT_HUES = [200, 280, 340, 130, 20, 245, 165, 305];
@@ -567,6 +568,10 @@ function renderMessage(message) {
     bubble.appendChild(link);
   }
 
+  if (state.ttsAvailable && message.content.trim()) {
+    bubble.appendChild(buildListenButton(message));
+  }
+
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.className = "message-delete-btn";
@@ -580,6 +585,45 @@ function renderMessage(message) {
   bubble.appendChild(deleteBtn);
 
   document.getElementById("message-list").appendChild(row);
+}
+
+let activeAudio = null;
+
+function buildListenButton(message) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "message-listen-btn";
+  btn.textContent = "🔊";
+  btn.title = "Ouvir mensagem";
+  btn.onclick = async () => {
+    if (activeAudio) {
+      activeAudio.pause();
+      activeAudio = null;
+    }
+    const original = btn.textContent;
+    btn.textContent = "⏳";
+    btn.disabled = true;
+    try {
+      const res = await fetch(
+        `/api/conversations/${message.conversation_id}/messages/${message.id}/audio`
+      );
+      if (!res.ok) throw new Error(`falha ao gerar áudio (${res.status})`);
+      const blob = await res.blob();
+      const audio = new Audio(URL.createObjectURL(blob));
+      activeAudio = audio;
+      audio.play();
+      audio.onended = () => {
+        if (activeAudio === audio) activeAudio = null;
+      };
+    } catch (err) {
+      console.error("Failed to play message audio:", err);
+      alert("Não foi possível gerar o áudio dessa mensagem.");
+    } finally {
+      btn.textContent = original;
+      btn.disabled = false;
+    }
+  };
+  return btn;
 }
 
 function updateMessageListEmptyState() {
@@ -1055,6 +1099,12 @@ document.getElementById("message-form").onsubmit = async (e) => {
 };
 
 (async function init() {
+  try {
+    const status = await api("/api/tts/status");
+    state.ttsAvailable = status.available;
+  } catch (err) {
+    console.error("Failed to load TTS status:", err);
+  }
   await loadGroups();
   startPolling();
 })();
