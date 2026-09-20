@@ -443,8 +443,20 @@ function renderSearchChip(message) {
   const firstLine = message.content.split("\n")[0] || "Pesquisou na internet";
   chip.textContent = `🔍 ${firstLine}`;
   chip.title = message.content;
-
   row.appendChild(chip);
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "message-delete-btn";
+  deleteBtn.textContent = "🗑";
+  deleteBtn.title = "Apagar mensagem";
+  deleteBtn.onclick = async () => {
+    if (!confirm("Apagar esta mensagem? Ela some da conversa e do contexto dos agentes permanentemente.")) return;
+    await api(`/api/conversations/${message.conversation_id}/messages/${message.id}`, { method: "DELETE" });
+    row.remove();
+  };
+  row.appendChild(deleteBtn);
+
   document.getElementById("message-list").appendChild(row);
 }
 
@@ -499,6 +511,18 @@ function renderMessage(message) {
     link.target = "_blank";
     bubble.appendChild(link);
   }
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "message-delete-btn";
+  deleteBtn.textContent = "🗑";
+  deleteBtn.title = "Apagar mensagem";
+  deleteBtn.onclick = async () => {
+    if (!confirm("Apagar esta mensagem? Ela some da conversa e do contexto dos agentes permanentemente.")) return;
+    await api(`/api/conversations/${message.conversation_id}/messages/${message.id}`, { method: "DELETE" });
+    row.remove();
+  };
+  bubble.appendChild(deleteBtn);
 
   document.getElementById("message-list").appendChild(row);
 }
