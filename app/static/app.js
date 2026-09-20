@@ -367,9 +367,16 @@ function renderMembers(groupId) {
 
 async function refreshHiddenMessages() {
   if (!state.activeConversationId) return;
+  // Same generation guard as pollMessages: without it, switching conversations while
+  // this fetch is in flight could land a stale response (another conversation's hidden
+  // messages, with delete buttons closing over their ids) on top of the new conversation's
+  // panel after the switch completes.
+  const generation = state.pollGeneration;
+  const conversationId = state.activeConversationId;
   const messages = await api(
-    `/api/conversations/${state.activeConversationId}/messages?include_hidden=true`
+    `/api/conversations/${conversationId}/messages?include_hidden=true`
   );
+  if (generation !== state.pollGeneration) return;
   const container = document.getElementById("hidden-messages-list");
   container.innerHTML = "";
   const hidden = messages.filter((m) => m.hidden);
@@ -396,8 +403,8 @@ async function refreshHiddenMessages() {
     deleteBtn.title = "Apagar mensagem";
     deleteBtn.onclick = async () => {
       if (!confirm("Apagar esta mensagem oculta? Ela some do contexto dos agentes permanentemente.")) return;
-      await api(`/api/conversations/${state.activeConversationId}/messages/${message.id}`, { method: "DELETE" });
-      refreshHiddenMessages();
+      await api(`/api/conversations/${conversationId}/messages/${message.id}`, { method: "DELETE" });
+      await refreshHiddenMessages();
     };
     item.appendChild(deleteBtn);
 
