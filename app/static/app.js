@@ -302,6 +302,7 @@ async function selectConversation(conversationId) {
   document.getElementById("stop-queue-btn").classList.add("hidden");
   renderConversationList();
   renderConversationContext();
+  await refreshHiddenMessages();
   await pollMessages();
   await pollPendingStatus();
 }
@@ -362,6 +363,46 @@ function renderMembers(groupId) {
     });
     await loadMembers(groupId);
   };
+}
+
+async function refreshHiddenMessages() {
+  if (!state.activeConversationId) return;
+  const messages = await api(
+    `/api/conversations/${state.activeConversationId}/messages?include_hidden=true`
+  );
+  const container = document.getElementById("hidden-messages-list");
+  container.innerHTML = "";
+  const hidden = messages.filter((m) => m.hidden);
+  if (hidden.length === 0) {
+    container.textContent = "Nenhuma.";
+    return;
+  }
+  for (const message of hidden) {
+    const item = document.createElement("div");
+    item.className = "hidden-message-item";
+
+    const preview = document.createElement("span");
+    preview.className = "hidden-message-preview";
+    const label = message.hidden_kind || "oculta";
+    const text = message.content.length > 80 ? message.content.slice(0, 80) + "…" : message.content;
+    preview.textContent = `[${label}] ${text}`;
+    preview.title = message.content;
+    item.appendChild(preview);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "message-delete-btn";
+    deleteBtn.textContent = "🗑";
+    deleteBtn.title = "Apagar mensagem";
+    deleteBtn.onclick = async () => {
+      if (!confirm("Apagar esta mensagem oculta? Ela some do contexto dos agentes permanentemente.")) return;
+      await api(`/api/conversations/${state.activeConversationId}/messages/${message.id}`, { method: "DELETE" });
+      refreshHiddenMessages();
+    };
+    item.appendChild(deleteBtn);
+
+    container.appendChild(item);
+  }
 }
 
 function escapeHtml(text) {

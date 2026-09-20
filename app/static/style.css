@@ -568,6 +568,21 @@ button[type="submit"]:active:not(:disabled) { background: var(--accent-active); 
 .context-block { display: flex; flex-direction: column; gap: 8px; }
 .context-block-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-faint); }
 
+#hidden-messages-list { display: flex; flex-direction: column; gap: 6px; }
+.hidden-message-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.hidden-message-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .context-card {
   display: flex;
   align-items: center;
