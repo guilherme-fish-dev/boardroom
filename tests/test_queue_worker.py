@@ -1437,3 +1437,38 @@ def test_process_next_job_agent_turn_history_includes_pdf_extract_text(db, monke
 
     contents = [m["content"] for m in calls[0]["messages"]]
     assert any("conteúdo extraído do pdf de teste" in c for c in contents)
+
+
+def test_process_next_job_mention_instructions_explain_when_to_use_at_sign(db, monkeypatch):
+    conn = get_connection()
+    bob_id = _create_agent(conn, name="bob")
+    alice_id = _create_agent(conn, name="alice")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, bob_id)
+    _add_member(conn, group_id, alice_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', '@bob oi')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, bob_id),
+    )
+    conn.commit()
+    conn.close()
+
+    calls = []
+    monkeypatch.setattr(
+        "app.queue_worker.chat_completion",
+        lambda **kwargs: calls.append(kwargs) or "olá",
+    )
+
+    process_next_job()
+
+    system_content = calls[0]["messages"][0]["content"]
+    assert "SOMENTE quando" in system_content
+    assert "SEM o @" in system_content
+    assert "@Ana, pode confirmar esse número" in system_content
+    assert "Concordo com o que a Ana falou" in system_content

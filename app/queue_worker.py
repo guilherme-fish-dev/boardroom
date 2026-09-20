@@ -94,9 +94,17 @@ def _mention_instructions(other_agent_names: list[str]) -> str:
     names_list = ", ".join(f"@{name}" for name in other_agent_names)
     return (
         "\n\nVocê também pode mencionar outros agentes deste grupo escrevendo @nome-exato "
-        "em qualquer parte da sua resposta, para trazer a opinião deles pra conversa ou "
-        "encadear uma sequência de respostas (ex.: pedir pra outro agente validar ou "
-        "continuar o que você disse). Use o nome exato cadastrado do agente. "
+        "em qualquer parte da sua resposta — mas cada menção com @ aciona uma resposta "
+        "completa daquele agente, o que custa tempo e contexto. Use @nome SOMENTE quando "
+        "você realmente precisa que aquele agente responda ou aja agora (pedir validação, "
+        "fazer uma pergunta direta a ele, ou encadear a conversa para ele continuar). "
+        "Quando só quiser citar, comentar ou concordar com algo que outro agente já disse, "
+        "escreva o nome dele SEM o @ — isso não aciona nada. "
+        'Exemplo de menção correta (precisa de ação): "@Ana, pode confirmar esse número '
+        'antes de eu continuar?" '
+        'Exemplo de referência correta (não precisa de ação, sem @): "Concordo com o que '
+        'a Ana falou sobre o orçamento." '
+        "Use o nome exato cadastrado do agente quando for mencionar com @. "
         f"Agentes deste grupo que você pode mencionar: {names_list}."
     )
 
