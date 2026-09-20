@@ -273,11 +273,8 @@ body {
   margin-left: 8px;
   font-size: 12px;
   line-height: 1;
-  opacity: 0;
-  transition: opacity 150ms ease, color 150ms ease;
+  transition: color 150ms ease;
 }
-.message-bubble:hover .message-delete-btn,
-.search-chip:hover .message-delete-btn { opacity: 1; }
 .message-delete-btn:hover { color: var(--danger); }
 
 #add-member-select {
