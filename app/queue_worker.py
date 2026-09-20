@@ -101,24 +101,36 @@ WAIT_USER_HEURISTIC_PATTERN = re.compile(
 )
 
 
+def _group_roster_content(other_members: list[sqlite3.Row]) -> str:
+    """A standalone system message listing every other agent in the group with its
+    subtitle, so an agent always knows *who* to @mention (e.g. to ask a legal question,
+    reach for whoever's subtitle says "auditor") — not just their bare names, which by
+    themselves carry no signal about each agent's role."""
+    if not other_members:
+        return ""
+    lines = [
+        f"- {row['name']}: {row['subtitle']}" if row["subtitle"] else f"- {row['name']}"
+        for row in other_members
+    ]
+    return "Outros agentes deste grupo e suas funções:\n" + "\n".join(lines)
+
+
 def _mention_instructions(other_agent_names: list[str]) -> str:
     if not other_agent_names:
         return ""
-    names_list = ", ".join(f"@{name}" for name in other_agent_names)
     return (
-        "\n\nVocê também pode mencionar outros agentes deste grupo escrevendo @nome-exato "
-        "em qualquer parte da sua resposta — mas cada menção com @ aciona uma resposta "
-        "completa daquele agente, o que custa tempo e contexto. Use @nome SOMENTE quando "
-        "você realmente precisa que aquele agente responda ou aja agora (pedir validação, "
-        "fazer uma pergunta direta a ele, ou encadear a conversa para ele continuar). "
-        "Quando só quiser citar, comentar ou concordar com algo que outro agente já disse, "
-        "escreva o nome dele SEM o @ — isso não aciona nada. "
+        "\n\nVocê também pode mencionar outros agentes deste grupo (veja a lista acima) "
+        "escrevendo @nome-exato em qualquer parte da sua resposta — mas cada menção com @ "
+        "aciona uma resposta completa daquele agente, o que custa tempo e contexto. Use "
+        "@nome SOMENTE quando você realmente precisa que aquele agente responda ou aja "
+        "agora (pedir validação, fazer uma pergunta direta a ele, ou encadear a conversa "
+        "para ele continuar). Quando só quiser citar, comentar ou concordar com algo que "
+        "outro agente já disse, escreva o nome dele SEM o @ — isso não aciona nada. "
         'Exemplo de menção correta (precisa de ação): "@Ana, pode confirmar esse número '
         'antes de eu continuar?" '
         'Exemplo de referência correta (não precisa de ação, sem @): "Concordo com o que '
         'a Ana falou sobre o orçamento." '
-        "Use o nome exato cadastrado do agente quando for mencionar com @. "
-        f"Agentes deste grupo que você pode mencionar: {names_list}."
+        "Use o nome exato cadastrado do agente quando for mencionar com @."
     )
 
 # Ancorado ao início de linha (não à string inteira) pra pegar o padrão mesmo quando o
@@ -147,10 +159,10 @@ def _conversation_is_awaiting_user(conn: sqlite3.Connection, conversation_id: in
     )
 
 
-def _other_group_agent_names(conn: sqlite3.Connection, conversation_id: int, agent_id: int) -> list[str]:
-    rows = conn.execute(
+def _other_group_agents(conn: sqlite3.Connection, conversation_id: int, agent_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
         """
-        SELECT agents.name FROM agents
+        SELECT agents.name, agents.subtitle FROM agents
         JOIN group_members ON group_members.agent_id = agents.id
         JOIN conversations ON conversations.group_id = group_members.group_id
         WHERE conversations.id = ? AND agents.id != ?
@@ -158,7 +170,6 @@ def _other_group_agent_names(conn: sqlite3.Connection, conversation_id: int, age
         """,
         (conversation_id, agent_id),
     ).fetchall()
-    return [row["name"] for row in rows]
 
 
 def _build_history(
@@ -185,16 +196,19 @@ def _build_history(
         omitted = total_rows - max_messages
         rows = rows[-max_messages:]
 
-    other_names = _other_group_agent_names(conn, conversation_id, agent_id)
+    other_members = _other_group_agents(conn, conversation_id, agent_id)
+    other_names = [row["name"] for row in other_members]
     agent_names = {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM agents")}
     system_content = (
-        agent_persona
-        + WEB_SEARCH_INSTRUCTIONS
-        + SKIP_INSTRUCTIONS
-        + WAIT_USER_INSTRUCTIONS
-        + _mention_instructions(other_names)
+        agent_persona + WEB_SEARCH_INSTRUCTIONS + SKIP_INSTRUCTIONS + WAIT_USER_INSTRUCTIONS
     )
     messages = [{"role": "system", "content": system_content}]
+
+    roster_content = _group_roster_content(other_members)
+    if roster_content:
+        messages.append(
+            {"role": "system", "content": roster_content + _mention_instructions(other_names)}
+        )
 
     if omitted > 0:
         messages.append({
