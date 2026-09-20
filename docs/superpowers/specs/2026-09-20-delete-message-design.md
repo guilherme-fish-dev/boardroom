@@ -1,7 +1,7 @@
 # Excluir mensagem (recuperar contexto de um grupo)
 
 Data: 2026-09-20
-Status: Aprovado para planejamento
+Status: Implementado
 
 ## Contexto e motivação
 
