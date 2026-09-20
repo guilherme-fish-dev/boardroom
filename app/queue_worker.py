@@ -92,7 +92,10 @@ WAIT_USER_HEURISTIC_PATTERN = re.compile(
     r"|_{5,}"                                                # linha de preenchimento genérica
     r"|escolh[ae]\s+(uma\s+)?(dessas|dessa|das)?\s*op[cç][õo]es"  # "escolha uma dessas opções"
     r"|digite\s+(o\s+n[uú]mero|sua\s+escolha)"               # "digite o número" / "digite sua escolha"
-    r"|qual\s+(voc[eê]\s+)?(escolhe|prefere|ser[aá])"        # "qual você escolhe/prefere/será"
+    r"|qual\s+voc[eê]s?\s+(escolhe|prefere)"                 # "qual você escolhe/prefere" (exige o pronome —
+                                                              # sem ele, "qual será o resultado?" é uma
+                                                              # pergunta retórica comum entre agentes, não
+                                                              # dirigida ao usuário, e não deve pausar a fila)
     r"|aguardando\s+(sua|a\s+sua)\s+(decis[aã]o|escolha|resposta)",  # "aguardando sua decisão"
     re.IGNORECASE,
 )

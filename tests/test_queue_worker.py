@@ -1618,3 +1618,84 @@ def test_process_next_job_extract_pdf_runs_even_when_conversation_awaiting_user(
         conn.close()
     assert len(hidden_messages) == 1
     assert hidden_messages[0]["content"] == "texto do pdf"
+
+
+def test_process_agent_turn_heuristic_ignores_rhetorical_qual_sera(db, monkeypatch):
+    """'Qual será o resultado disso?' é uma pergunta retórica comum entre agentes discutindo
+    entre si, não um pedido de decisão dirigido ao usuário — não deve pausar a fila."""
+    conn = get_connection()
+    agent_id = _create_agent(conn, name="analista")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    reply_text = "Qual será o impacto disso no orçamento até o fim do trimestre?"
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: reply_text)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_msg = conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND sender_type = 'agent'",
+            (conversation_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert agent_msg["hidden_kind"] is None
+
+
+def test_process_agent_turn_circuit_breaker_blocks_stray_future_mention(db, monkeypatch):
+    """Cenário real que motivou a correção: um agente escreve uma menção condicional/futura
+    (ex.: "quando você decidir, @Ana vai analisar") depois que outro agente já pediu a decisão
+    do usuário. A menção cria um novo job pra Ana, mas a trava mecânica deve bloqueá-lo sem
+    chamar o modelo, porque a conversa continua "aguardando usuário"."""
+    conn = get_connection()
+    ana_id = _create_agent(conn, name="ana")
+    milton_id = _create_agent(conn, name="milton")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, ana_id)
+    _add_member(conn, group_id, milton_id)
+
+    # Milton já pediu a decisão do usuário (mensagem mais recente visível, hidden_kind='wait_user')
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, sender_id, content, hidden_kind) "
+        "VALUES (?, 'agent', ?, 'Escolha 1, 2 ou 3. Quando decidir, @ana entrará em ação.', 'wait_user')",
+        (conversation_id, milton_id),
+    )
+    # A própria menção "@ana" acima teria disparado este job (fora do escopo deste teste simular
+    # o enqueue_mentions; aqui só confirmamos que, uma vez criado, a trava o bloqueia).
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, ana_id),
+    )
+    conn.commit()
+    conn.close()
+
+    def _fail_if_called(**kwargs):
+        raise AssertionError("chat_completion não deveria ser chamado")
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", _fail_if_called)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM queue_jobs WHERE agent_id = ?", (ana_id,)).fetchone()
+        ana_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent' AND sender_id = ?", (ana_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert job["status"] == "done"
+    assert ana_messages == []
