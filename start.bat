@@ -51,3 +51,8 @@ echo.
 
 timeout /t 2 /nobreak >nul
 start "" http://localhost:8000
+
+echo  O servidor continua rodando em segundo plano mesmo depois de fechar esta janela.
+echo  Rode stop.bat para pará-lo.
+echo.
+pause >nul
