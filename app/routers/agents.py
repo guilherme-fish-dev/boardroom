@@ -12,6 +12,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 class AgentIn(BaseModel):
     name: str
     persona_prompt: str
+    subtitle: str = ""
     model_name: str
     vision_capable: bool = False
 
@@ -36,6 +37,7 @@ def _row_to_agent(row: sqlite3.Row) -> AgentOut:
         id=row["id"],
         name=row["name"],
         persona_prompt=row["persona_prompt"],
+        subtitle=row["subtitle"],
         model_name=row["model_name"],
         vision_capable=bool(row["vision_capable"]),
         created_at=row["created_at"],
@@ -58,9 +60,15 @@ def create_agent(agent: AgentIn) -> AgentOut:
     try:
         try:
             cur = conn.execute(
-                "INSERT INTO agents (name, persona_prompt, model_name, vision_capable) "
-                "VALUES (?, ?, ?, ?)",
-                (agent.name, agent.persona_prompt, agent.model_name, int(agent.vision_capable)),
+                "INSERT INTO agents (name, persona_prompt, subtitle, model_name, vision_capable) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    agent.name,
+                    agent.persona_prompt,
+                    agent.subtitle,
+                    agent.model_name,
+                    int(agent.vision_capable),
+                ),
             )
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="agent name already exists")
@@ -77,9 +85,16 @@ def update_agent(agent_id: int, agent: AgentIn) -> AgentOut:
     try:
         try:
             cur = conn.execute(
-                "UPDATE agents SET name = ?, persona_prompt = ?, model_name = ?, vision_capable = ? "
-                "WHERE id = ?",
-                (agent.name, agent.persona_prompt, agent.model_name, int(agent.vision_capable), agent_id),
+                "UPDATE agents SET name = ?, persona_prompt = ?, subtitle = ?, model_name = ?, "
+                "vision_capable = ? WHERE id = ?",
+                (
+                    agent.name,
+                    agent.persona_prompt,
+                    agent.subtitle,
+                    agent.model_name,
+                    int(agent.vision_capable),
+                    agent_id,
+                ),
             )
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="agent name already exists")

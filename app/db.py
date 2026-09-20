@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS agents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     persona_prompt TEXT NOT NULL,
+    subtitle TEXT NOT NULL DEFAULT '',
     model_name TEXT NOT NULL,
     vision_capable INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -96,6 +97,12 @@ def _ensure_group_icon_column(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(groups)")}
     if "icon" not in columns:
         conn.execute("ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT '💬'")
+
+
+def _ensure_agent_subtitle_column(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(agents)")}
+    if "subtitle" not in columns:
+        conn.execute("ALTER TABLE agents ADD COLUMN subtitle TEXT NOT NULL DEFAULT ''")
 
 
 def _ensure_pdf_path_column(conn: sqlite3.Connection) -> None:
@@ -267,6 +274,7 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         _ensure_hidden_kind_column(conn)
         _ensure_group_icon_column(conn)
+        _ensure_agent_subtitle_column(conn)
         _ensure_conversations_table(conn)
         _ensure_pdf_path_column(conn)
         _ensure_queue_jobs_allows_extract_pdf(conn)

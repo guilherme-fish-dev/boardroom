@@ -321,6 +321,11 @@ function renderMembers(groupId) {
   for (const member of state.members) {
     const badge = document.createElement("span");
     badge.className = "member-badge";
+    const agent = state.agents.find((a) => a.id === member.id);
+    const hint = agent?.subtitle || agent?.persona_prompt || "";
+    if (hint) {
+      badge.title = hint;
+    }
     const dot = document.createElement("span");
     dot.className = "member-dot";
     dot.style.background = agentColor(member.name);
@@ -700,6 +705,7 @@ async function loadAgents() {
 
 function startEditingAgent(agent) {
   document.getElementById("agent-name").value = agent.name;
+  document.getElementById("agent-subtitle").value = agent.subtitle || "";
   document.getElementById("agent-persona").value = agent.persona_prompt;
   document.getElementById("agent-vision").checked = agent.vision_capable;
   loadModels(agent.model_name);
@@ -878,6 +884,7 @@ document.getElementById("agent-form").onsubmit = async (e) => {
   const payload = {
     name: document.getElementById("agent-name").value,
     persona_prompt: document.getElementById("agent-persona").value,
+    subtitle: document.getElementById("agent-subtitle").value,
     model_name: document.getElementById("agent-model").value,
     vision_capable: document.getElementById("agent-vision").checked,
   };
