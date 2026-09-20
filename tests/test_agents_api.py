@@ -241,3 +241,55 @@ def test_delete_agent_cascades_group_membership_and_jobs(db):
         conn.close()
     assert members == []
     assert jobs == []
+
+
+def test_create_agent_named_all_rejected(db):
+    client = make_client(db)
+    resp = client.post(
+        "/api/agents",
+        json={
+            "name": "all",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_create_agent_named_all_rejected_case_insensitive(db):
+    client = make_client(db)
+    resp = client.post(
+        "/api/agents",
+        json={
+            "name": "ALL",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_update_agent_renamed_to_all_rejected(db):
+    client = make_client(db)
+    bob = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    ).json()
+
+    resp = client.put(
+        f"/api/agents/{bob['id']}",
+        json={
+            "name": "all",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    )
+    assert resp.status_code == 422

@@ -1,7 +1,7 @@
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.db import get_connection, get_setting
 from app.llm_client import chat_completion
@@ -14,6 +14,16 @@ class AgentIn(BaseModel):
     persona_prompt: str
     model_name: str
     vision_capable: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def name_not_reserved(cls, value: str) -> str:
+        # "all" is a reserved mention keyword (@all fans out to every group member, see
+        # enqueue_mentions in app/routers/messages.py) — an agent with this literal name
+        # would never be individually mentionable.
+        if value.strip().lower() == "all":
+            raise ValueError('"all" is a reserved name and can\'t be used for an agent')
+        return value
 
 
 class AgentOut(AgentIn):
