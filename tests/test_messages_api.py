@@ -458,3 +458,98 @@ def test_enqueue_mentions_from_user_never_blocked_by_cooldown(db):
     finally:
         conn.close()
     assert {j["agent_id"] for j in jobs} == {bob["id"], alice["id"]}
+
+
+def test_upload_pdf_creates_message_and_priority_job(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+
+    files = {"pdf": ("relatorio.pdf", b"fake-pdf-bytes", "application/pdf")}
+    resp = client.post(
+        f"/api/conversations/{conversation['id']}/messages/pdf",
+        data={"content": "segue o relatório"},
+        files=files,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["pdf_path"] is not None
+    assert body["conversation_id"] == conversation["id"]
+
+    conn = get_connection()
+    try:
+        jobs = conn.execute("SELECT * FROM queue_jobs").fetchall()
+    finally:
+        conn.close()
+    assert len(jobs) == 1
+    assert jobs[0]["job_type"] == "extract_pdf"
+    assert jobs[0]["priority"] == 0
+    assert jobs[0]["conversation_id"] == conversation["id"]
+
+
+def test_upload_pdf_rejects_non_pdf_content_type(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+
+    files = {"pdf": ("notes.txt", b"just text", "text/plain")}
+    resp = client.post(
+        f"/api/conversations/{conversation['id']}/messages/pdf",
+        data={"content": "isso não é pdf"},
+        files=files,
+    )
+    assert resp.status_code == 415
+
+
+def test_upload_pdf_rejects_oversized_file(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+
+    big_payload = b"x" * (10 * 1024 * 1024 + 1)
+    files = {"pdf": ("big.pdf", big_payload, "application/pdf")}
+    resp = client.post(
+        f"/api/conversations/{conversation['id']}/messages/pdf",
+        data={"content": "arquivo grande"},
+        files=files,
+    )
+    assert resp.status_code == 413
+
+
+def test_upload_pdf_404_for_unknown_conversation(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+
+    files = {"pdf": ("relatorio.pdf", b"fake-pdf-bytes", "application/pdf")}
+    resp = client.post(
+        "/api/conversations/9999/messages/pdf",
+        data={"content": "relatório"},
+        files=files,
+    )
+    assert resp.status_code == 404
+
+
+def test_get_message_pdf_returns_file_bytes(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+
+    files = {"pdf": ("relatorio.pdf", b"fake-pdf-bytes", "application/pdf")}
+    message = client.post(
+        f"/api/conversations/{conversation['id']}/messages/pdf",
+        data={"content": "relatório"},
+        files=files,
+    ).json()
+
+    resp = client.get(f"/api/conversations/{conversation['id']}/messages/{message['id']}/pdf")
+    assert resp.status_code == 200
+    assert resp.content == b"fake-pdf-bytes"
+
+
+def test_get_message_pdf_404_when_no_pdf(db):
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client)
+    message = client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "sem pdf"}).json()
+
+    resp = client.get(f"/api/conversations/{conversation['id']}/messages/{message['id']}/pdf")
+    assert resp.status_code == 404

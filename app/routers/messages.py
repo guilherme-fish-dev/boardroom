@@ -25,6 +25,7 @@ class MessageOut(BaseModel):
     sender_id: int | None
     content: str
     image_path: str | None
+    pdf_path: str | None
     hidden: bool
     hidden_kind: str | None
     created_at: str
@@ -44,6 +45,7 @@ def _row_to_message(row: sqlite3.Row) -> MessageOut:
         sender_id=row["sender_id"],
         content=row["content"],
         image_path=row["image_path"],
+        pdf_path=row["pdf_path"],
         hidden=bool(row["hidden"]),
         hidden_kind=row["hidden_kind"],
         created_at=row["created_at"],
@@ -268,3 +270,63 @@ def get_message_image(conversation_id: int, message_id: int) -> FileResponse:
     if row is None or row["image_path"] is None:
         raise HTTPException(status_code=404, detail="image not found")
     return FileResponse(row["image_path"])
+
+
+MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024  # mesmo limite já usado para imagem
+
+
+@router.post("/pdf", response_model=MessageOut, status_code=201)
+async def post_pdf_message(
+    conversation_id: int, content: str = Form(""), pdf: UploadFile = File(...)
+) -> MessageOut:
+    if (pdf.content_type or "") != "application/pdf":
+        raise HTTPException(status_code=415, detail="file must be a PDF")
+
+    body = await pdf.read()
+    if len(body) > MAX_PDF_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="pdf too large (max 10MB)")
+
+    conn = get_connection()
+    try:
+        conversation = conn.execute(
+            "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
+
+        dest = _upload_dir() / f"{uuid.uuid4().hex}.pdf"
+        dest.write_bytes(body)
+
+        cur = conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content, pdf_path) "
+            "VALUES (?, 'user', NULL, ?, ?)",
+            (conversation_id, content, str(dest)),
+        )
+        message_id = cur.lastrowid
+
+        conn.execute(
+            "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+            "VALUES (?, NULL, 'extract_pdf', 0, ?)",
+            (conversation_id, json.dumps({"pdf_path": str(dest), "message_id": message_id})),
+        )
+        enqueue_mentions(conn, conversation_id, message_id, content)
+        conn.commit()
+        row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+    finally:
+        conn.close()
+    return _row_to_message(row)
+
+
+@router.get("/{message_id}/pdf")
+def get_message_pdf(conversation_id: int, message_id: int) -> FileResponse:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT pdf_path FROM messages WHERE id = ? AND conversation_id = ?",
+            (message_id, conversation_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row["pdf_path"] is None:
+        raise HTTPException(status_code=404, detail="pdf not found")
+    return FileResponse(row["pdf_path"], media_type="application/pdf")
