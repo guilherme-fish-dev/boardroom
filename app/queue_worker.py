@@ -172,11 +172,24 @@ def _other_group_agents(conn: sqlite3.Connection, conversation_id: int, agent_id
     ).fetchall()
 
 
+def _identity_instructions(agent_name: str) -> str:
+    return (
+        f"\n\nATENÇÃO: você é somente {agent_name}, um único participante desta conversa em "
+        "grupo — não o grupo inteiro. Nunca escreva falas, análises ou opiniões em nome de "
+        "outro agente, e nunca simule um debate ou resumo com as respostas de vários agentes "
+        "de uma vez (mesmo que você conheça a função de cada um pela lista abaixo). Se quiser "
+        "a opinião de outro agente, mencione-o com @nome-exato e pare sua resposta ali — é ele "
+        f"quem vai responder por si mesmo, em uma mensagem própria dele, não você. Toda a sua "
+        f"resposta deve conter só o que {agent_name} pensa e diria, na primeira pessoa."
+    )
+
+
 def _build_history(
     conn: sqlite3.Connection,
     conversation_id: int,
     agent_persona: str,
     agent_id: int,
+    agent_name: str,
     *,
     exclude_image_descriptions: bool = False,
     max_messages: int | None = None,
@@ -200,7 +213,11 @@ def _build_history(
     other_names = [row["name"] for row in other_members]
     agent_names = {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM agents")}
     system_content = (
-        agent_persona + WEB_SEARCH_INSTRUCTIONS + SKIP_INSTRUCTIONS + WAIT_USER_INSTRUCTIONS
+        agent_persona
+        + _identity_instructions(agent_name)
+        + WEB_SEARCH_INSTRUCTIONS
+        + SKIP_INSTRUCTIONS
+        + WAIT_USER_INSTRUCTIONS
     )
     messages = [{"role": "system", "content": system_content}]
 
@@ -302,6 +319,7 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         job["conversation_id"],
         agent["persona_prompt"],
         agent["id"],
+        agent["name"],
         exclude_image_descriptions=image_base64 is not None,
     )
 
@@ -321,6 +339,7 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
                 job["conversation_id"],
                 agent["persona_prompt"],
                 agent["id"],
+                agent["name"],
                 exclude_image_descriptions=image_base64 is not None,
                 max_messages=15,
             )
