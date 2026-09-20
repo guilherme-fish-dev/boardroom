@@ -87,6 +87,16 @@ WAIT_USER_INSTRUCTIONS = (
 
 WAIT_USER_MARKERS = ["[[AGUARDANDO_USUARIO]]", "[[WAIT_USER]]"]
 
+WAIT_USER_HEURISTIC_PATTERN = re.compile(
+    r"R\$\s*_{3,}"                                          # campo de preenchimento (ex.: R$ _____)
+    r"|_{5,}"                                                # linha de preenchimento genérica
+    r"|escolh[ae]\s+(uma\s+)?(dessas|dessa|das)?\s*op[cç][õo]es"  # "escolha uma dessas opções"
+    r"|digite\s+(o\s+n[uú]mero|sua\s+escolha)"               # "digite o número" / "digite sua escolha"
+    r"|qual\s+(voc[eê]\s+)?(escolhe|prefere|ser[aá])"        # "qual você escolhe/prefere/será"
+    r"|aguardando\s+(sua|a\s+sua)\s+(decis[aã]o|escolha|resposta)",  # "aguardando sua decisão"
+    re.IGNORECASE,
+)
+
 
 def _mention_instructions(other_agent_names: list[str]) -> str:
     if not other_agent_names:
@@ -116,6 +126,22 @@ def _mention_instructions(other_agent_names: list[str]) -> str:
 # caso vaza como texto normal — um risco menor que ativar uma busca indevida.
 SEARCH_PATTERN = re.compile(r"^\s*BUSCAR:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 MAX_SEARCHES_PER_TURN = 3
+
+
+def _conversation_is_awaiting_user(conn: sqlite3.Connection, conversation_id: int) -> bool:
+    """True if the most recent visible message in the conversation is an agent's turn that
+    flagged hidden_kind='wait_user' — i.e. someone already asked the user to decide/respond,
+    and nothing (not even the user) has spoken since. Mirrors the check in
+    app.routers.messages._maybe_enqueue_waiting_agent, which uses this same state to decide
+    whether to resume the waiting agent once the user does reply."""
+    last_msg = conn.execute(
+        "SELECT sender_type, hidden_kind FROM messages WHERE conversation_id = ? "
+        "AND hidden = 0 ORDER BY id DESC LIMIT 1",
+        (conversation_id,),
+    ).fetchone()
+    return bool(
+        last_msg and last_msg["sender_type"] == "agent" and last_msg["hidden_kind"] == "wait_user"
+    )
 
 
 def _other_group_agent_names(conn: sqlite3.Connection, conversation_id: int, agent_id: int) -> list[str]:
@@ -240,6 +266,10 @@ def _find_recent_image(conn: sqlite3.Connection, conversation_id: int) -> str | 
 
 
 def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
+    if _conversation_is_awaiting_user(conn, job["conversation_id"]):
+        conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
+        return
+
     agent = conn.execute("SELECT * FROM agents WHERE id = ?", (job["agent_id"],)).fetchone()
     base_url = _get_setting(conn, "llama_swap_base_url")
 
@@ -331,8 +361,10 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
             needs_user_action = True
             reply = re.sub(re.escape(marker), "", reply, flags=re.IGNORECASE).strip()
 
-    # Fallback heurístico: se há campos de preenchimento (ex: 'R$ _____') direcionados ao usuário
-    if not needs_user_action and re.search(r"R\$\s*_{3,}|_{5,}", reply):
+    # Fallback heurístico: cobre tanto campo de preenchimento (ex: 'R$ _____') quanto pedido
+    # de escolha entre opções numeradas — ambos são casos de "aguardando decisão do usuário"
+    # que o modelo às vezes não marca com a tag explícita.
+    if not needs_user_action and WAIT_USER_HEURISTIC_PATTERN.search(reply):
         needs_user_action = True
 
     hidden_kind = "wait_user" if needs_user_action else None

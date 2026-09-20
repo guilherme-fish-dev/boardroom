@@ -1472,3 +1472,149 @@ def test_process_next_job_mention_instructions_explain_when_to_use_at_sign(db, m
     assert "SEM o @" in system_content
     assert "@Ana, pode confirmar esse número" in system_content
     assert "Concordo com o que a Ana falou" in system_content
+
+
+def test_process_agent_turn_heuristic_detects_numbered_option_choice(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn, name="ana_opts")
+    group_id = _create_group(conn, name="grupo_opts")
+    conversation_id = _create_conversation(conn, group_id, name="Conversa Opts")
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    reply_text = (
+        "Escolha uma dessas opções: 1. Segurança 2. Eficiência 3. Híbrida. Qual você escolhe?"
+    )
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: reply_text)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_msg = conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND sender_type = 'agent'",
+            (conversation_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert agent_msg["hidden_kind"] == "wait_user"
+
+
+def test_process_agent_turn_skips_llm_call_when_conversation_awaiting_user(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn, name="milton")
+    group_id = _create_group(conn, name="grupo_espera")
+    conversation_id = _create_conversation(conn, group_id, name="Conversa Espera")
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, sender_id, content, hidden_kind) "
+        "VALUES (?, 'agent', ?, 'Escolha 1, 2 ou 3.', 'wait_user')",
+        (conversation_id, agent_id),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    def _fail_if_called(**kwargs):
+        raise AssertionError("chat_completion não deveria ser chamado")
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", _fail_if_called)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        job = conn.execute("SELECT * FROM queue_jobs").fetchone()
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert job["status"] == "done"
+    assert len(agent_messages) == 1  # só a mensagem wait_user original, nenhuma nova
+
+
+def test_process_agent_turn_runs_normally_after_user_replies(db, monkeypatch):
+    conn = get_connection()
+    agent_id = _create_agent(conn, name="milton2")
+    group_id = _create_group(conn, name="grupo_espera2")
+    conversation_id = _create_conversation(conn, group_id, name="Conversa Espera 2")
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, sender_id, content, hidden_kind) "
+        "VALUES (?, 'agent', ?, 'Escolha 1, 2 ou 3.', 'wait_user')",
+        (conversation_id, agent_id),
+    )
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'user', 'Escolho a opção 2')",
+        (conversation_id,),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", lambda **kwargs: "Perfeito, seguindo com a opção 2.")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        agent_messages = conn.execute(
+            "SELECT * FROM messages WHERE sender_type = 'agent'"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert len(agent_messages) == 2
+    assert agent_messages[1]["content"] == "Perfeito, seguindo com a opção 2."
+
+
+def test_process_next_job_extract_pdf_runs_even_when_conversation_awaiting_user(db, monkeypatch, tmp_path):
+    pdf_path = tmp_path / "fake.pdf"
+    pdf_path.write_bytes(b"fake-pdf-bytes")
+
+    conn = get_connection()
+    agent_id = _create_agent(conn, name="waiting_agent")
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, agent_id)
+    conn.execute(
+        "INSERT INTO messages (conversation_id, sender_type, sender_id, content, hidden_kind) "
+        "VALUES (?, 'agent', ?, 'Escolha 1, 2 ou 3.', 'wait_user')",
+        (conversation_id, agent_id),
+    )
+    conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, NULL, 'extract_pdf', 0, ?)",
+        (conversation_id, json.dumps({"pdf_path": str(pdf_path), "message_id": 1})),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr("app.queue_worker.extract_text", lambda path, **kwargs: "texto do pdf")
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        hidden_messages = conn.execute(
+            "SELECT * FROM messages WHERE hidden = 1 AND hidden_kind = 'pdf_extract'"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert len(hidden_messages) == 1
+    assert hidden_messages[0]["content"] == "texto do pdf"
