@@ -1407,6 +1407,10 @@ mentionInputEl.addEventListener("keyup", (e) => {
   }
 });
 
+mentionInputEl.addEventListener("click", () => {
+  updateMentionState();
+});
+
 mentionInputEl.addEventListener("blur", () => {
   // Pequeno atraso para permitir que o clique num item do dropdown (que também
   // dispara blur) seja processado antes de fechar a lista.
