@@ -74,7 +74,10 @@
             </div>
             <div id="message-list"></div>
             <form id="message-form">
-              <input id="message-input" placeholder="Mensagem (@nome ou @all para mencionar)" autocomplete="off" />
+              <div id="message-input-wrapper">
+                <input id="message-input" placeholder="Mensagem (@nome ou @all para mencionar)" autocomplete="off" />
+                <ul id="mention-suggestions" class="hidden"></ul>
+              </div>
               <label class="file-btn" for="image-input">Anexar imagem</label>
               <input id="image-input" type="file" accept="image/*" class="visually-hidden" />
               <span id="image-filename" class="file-name"></span>

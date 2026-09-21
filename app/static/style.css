@@ -440,7 +440,41 @@ body {
 }
 
 #message-form { display: flex; flex-direction: row; gap: 8px; align-items: center; }
-#message-input { flex: 1; }
+#message-input-wrapper { position: relative; flex: 1; }
+#message-input { width: 100%; }
+
+#mention-suggestions {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+}
+#mention-suggestions.hidden { display: none; }
+#mention-suggestions li {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#mention-suggestions li.active,
+#mention-suggestions li:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
 
 .file-btn {
   background: var(--surface);
