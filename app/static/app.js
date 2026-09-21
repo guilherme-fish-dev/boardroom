@@ -1311,6 +1311,70 @@ function getMentionCandidates(query) {
   return candidates;
 }
 
+function renderMentionSuggestions() {
+  const list = document.getElementById("mention-suggestions");
+  list.innerHTML = "";
+  if (!state.mention.active || state.mention.candidates.length === 0) {
+    list.classList.add("hidden");
+    return;
+  }
+  state.mention.candidates.forEach((candidate, index) => {
+    const li = document.createElement("li");
+    li.textContent = candidate.isAll ? "all — mencionar todos os agentes" : candidate.name;
+    if (index === state.mention.activeIndex) li.classList.add("active");
+    li.onclick = () => applyMentionCandidate(candidate);
+    list.appendChild(li);
+  });
+  list.classList.remove("hidden");
+}
+
+function closeMentionSuggestions() {
+  state.mention = { active: false, start: -1, end: -1, activeIndex: 0, candidates: [] };
+  renderMentionSuggestions();
+}
+
+function applyMentionCandidate(candidate) {
+  const input = document.getElementById("message-input");
+  const { start, end } = state.mention;
+  const before = input.value.slice(0, start);
+  const after = input.value.slice(end);
+  const inserted = `@${candidate.name} `;
+  input.value = before + inserted + after;
+  const cursor = before.length + inserted.length;
+  input.focus();
+  input.setSelectionRange(cursor, cursor);
+  closeMentionSuggestions();
+}
+
+function updateMentionState() {
+  const input = document.getElementById("message-input");
+  const cursor = input.selectionStart;
+  const value = input.value;
+  const atIndex = value.lastIndexOf("@", cursor - 1);
+  if (atIndex === -1) {
+    closeMentionSuggestions();
+    return;
+  }
+  const query = value.slice(atIndex + 1, cursor);
+  if (query.includes("@") || query.includes("\n")) {
+    closeMentionSuggestions();
+    return;
+  }
+  const candidates = getMentionCandidates(query);
+  if (candidates.length === 0) {
+    closeMentionSuggestions();
+    return;
+  }
+  state.mention = {
+    active: true,
+    start: atIndex,
+    end: cursor,
+    activeIndex: 0,
+    candidates,
+  };
+  renderMentionSuggestions();
+}
+
 document.getElementById("message-form").onsubmit = async (e) => {
   e.preventDefault();
   if (!state.activeConversationId) return;
