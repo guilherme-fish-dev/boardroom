@@ -1375,6 +1375,44 @@ function updateMentionState() {
   renderMentionSuggestions();
 }
 
+const mentionInputEl = document.getElementById("message-input");
+
+mentionInputEl.addEventListener("input", () => {
+  updateMentionState();
+});
+
+mentionInputEl.addEventListener("keydown", (e) => {
+  if (!state.mention.active) return;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    state.mention.activeIndex = (state.mention.activeIndex + 1) % state.mention.candidates.length;
+    renderMentionSuggestions();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    state.mention.activeIndex =
+      (state.mention.activeIndex - 1 + state.mention.candidates.length) % state.mention.candidates.length;
+    renderMentionSuggestions();
+  } else if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault();
+    applyMentionCandidate(state.mention.candidates[state.mention.activeIndex]);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeMentionSuggestions();
+  }
+});
+
+mentionInputEl.addEventListener("keyup", (e) => {
+  if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
+    updateMentionState();
+  }
+});
+
+mentionInputEl.addEventListener("blur", () => {
+  // Pequeno atraso para permitir que o clique num item do dropdown (que também
+  // dispara blur) seja processado antes de fechar a lista.
+  setTimeout(() => closeMentionSuggestions(), 150);
+});
+
 document.getElementById("message-form").onsubmit = async (e) => {
   e.preventDefault();
   if (!state.activeConversationId) return;
