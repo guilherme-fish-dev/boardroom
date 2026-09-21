@@ -7,6 +7,7 @@ const state = {
   agents: [],
   agentCategories: [],
   members: [],
+  mention: { active: false, start: -1, end: -1, activeIndex: 0, candidates: [] },
   lastMessageId: 0,
   pollTimer: null,
   pollGeneration: 0,
@@ -1295,6 +1296,20 @@ document.getElementById("pdf-input").addEventListener("change", (e) => {
   const file = e.target.files[0];
   document.getElementById("pdf-filename").textContent = file ? file.name : "";
 });
+
+function getMentionCandidates(query) {
+  const lowerQuery = query.toLowerCase();
+  const candidates = [];
+  if ("all".startsWith(lowerQuery)) {
+    candidates.push({ id: "all", name: "all", isAll: true });
+  }
+  for (const member of state.members) {
+    if (member.name.toLowerCase().startsWith(lowerQuery)) {
+      candidates.push({ id: member.id, name: member.name, isAll: false });
+    }
+  }
+  return candidates;
+}
 
 document.getElementById("message-form").onsubmit = async (e) => {
   e.preventDefault();
