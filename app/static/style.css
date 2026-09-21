@@ -459,7 +459,6 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   z-index: 20;
 }
-#mention-suggestions.hidden { display: none; }
 #mention-suggestions li {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
