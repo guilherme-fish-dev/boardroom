@@ -18,6 +18,15 @@ class AgentCategoryOut(AgentCategoryIn):
     agent_count: int
 
 
+class AgentCategoryMemberOut(BaseModel):
+    id: int
+    name: str
+
+
+class AgentCategoryMemberIds(BaseModel):
+    agent_ids: list[int]
+
+
 @router.get("", response_model=list[AgentCategoryOut])
 def list_agent_categories() -> list[AgentCategoryOut]:
     conn = get_connection()
@@ -60,6 +69,79 @@ def delete_agent_category(category_id: int) -> Response:
         cur = conn.execute("DELETE FROM agent_categories WHERE id = ?", (category_id,))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="category not found")
+        conn.commit()
+    finally:
+        conn.close()
+    return Response(status_code=204)
+
+
+@router.get("/{category_id}/members", response_model=list[AgentCategoryMemberOut])
+def list_agent_category_members(category_id: int) -> list[AgentCategoryMemberOut]:
+    conn = get_connection()
+    try:
+        category = conn.execute(
+            "SELECT id FROM agent_categories WHERE id = ?", (category_id,)
+        ).fetchone()
+        if category is None:
+            raise HTTPException(status_code=404, detail="category not found")
+        rows = conn.execute(
+            "SELECT agents.id, agents.name FROM agent_category_members "
+            "JOIN agents ON agents.id = agent_category_members.agent_id "
+            "WHERE agent_category_members.category_id = ? ORDER BY agents.id",
+            (category_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [AgentCategoryMemberOut(id=r["id"], name=r["name"]) for r in rows]
+
+
+@router.post("/{category_id}/members/add", status_code=204)
+def add_agent_category_members(category_id: int, payload: AgentCategoryMemberIds) -> Response:
+    conn = get_connection()
+    try:
+        category = conn.execute(
+            "SELECT id FROM agent_categories WHERE id = ?", (category_id,)
+        ).fetchone()
+        if category is None:
+            raise HTTPException(status_code=404, detail="category not found")
+
+        # Validar a existência de cada agent_id ANTES de inserir, em vez de confiar em
+        # "INSERT OR IGNORE" sozinho: OR IGNORE também suprime a violação de FK de um
+        # agent_id inexistente (mesma armadilha já vista na sincronização de categorias
+        # em app/routers/agents.py), o que faria um id inválido ser silenciosamente
+        # ignorado em vez de retornar 400. Validando antes, o INSERT OR IGNORE abaixo só
+        # precisa lidar com o caso inofensivo de "já é membro" (colisão de PK).
+        agent_ids = list(dict.fromkeys(payload.agent_ids))
+        for agent_id in agent_ids:
+            agent = conn.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)).fetchone()
+            if agent is None:
+                raise HTTPException(status_code=400, detail=f"agent {agent_id} not found")
+
+        for agent_id in agent_ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO agent_category_members (category_id, agent_id) VALUES (?, ?)",
+                (category_id, agent_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return Response(status_code=204)
+
+
+@router.post("/{category_id}/members/remove", status_code=204)
+def remove_agent_category_members(category_id: int, payload: AgentCategoryMemberIds) -> Response:
+    conn = get_connection()
+    try:
+        category = conn.execute(
+            "SELECT id FROM agent_categories WHERE id = ?", (category_id,)
+        ).fetchone()
+        if category is None:
+            raise HTTPException(status_code=404, detail="category not found")
+        for agent_id in payload.agent_ids:
+            conn.execute(
+                "DELETE FROM agent_category_members WHERE category_id = ? AND agent_id = ?",
+                (category_id, agent_id),
+            )
         conn.commit()
     finally:
         conn.close()
