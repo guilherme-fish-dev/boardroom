@@ -97,6 +97,52 @@ def test_process_next_job_agent_turn_posts_reply_and_marks_done(db, monkeypatch)
     assert job["status"] == "done"
 
 
+def test_process_next_job_agent_turn_skips_insert_if_job_no_longer_processing(db, monkeypatch):
+    """Regression test for a duplicate-reply bug observed in production: the same agent
+    reply text ended up inserted twice for what was, as far as queue_jobs shows, a single
+    job. The exact trigger was never pinned down (queue_jobs never showed a duplicate row,
+    and _fetch_next_job's atomic claim held up under a 20-thread stress test), but whatever
+    it is, it must involve the job somehow no longer being 'processing' by the time this
+    job's own execution reaches the final insert. This guards the symptom directly: if the
+    job isn't 'processing' anymore right before the insert, some other execution already
+    finalized it, and this one must not insert a duplicate reply."""
+    conn = get_connection()
+    agent_id = _create_agent(conn)
+    group_id = _create_group(conn)
+    conversation_id = _create_conversation(conn, group_id)
+    _add_member(conn, group_id, agent_id)
+    cur = conn.execute(
+        "INSERT INTO queue_jobs (conversation_id, agent_id, job_type, priority, payload) "
+        "VALUES (?, ?, 'agent_turn', 1, '{}')",
+        (conversation_id, agent_id),
+    )
+    job_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    def fake_chat_completion(**kwargs):
+        # Simulate some other execution finalizing this same job while this call was still
+        # generating its reply.
+        side_conn = get_connection()
+        try:
+            side_conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job_id,))
+            side_conn.commit()
+        finally:
+            side_conn.close()
+        return "resposta que não deveria ser inserida duas vezes"
+
+    monkeypatch.setattr("app.queue_worker.chat_completion", fake_chat_completion)
+
+    process_next_job()
+
+    conn = get_connection()
+    try:
+        messages = conn.execute("SELECT * FROM messages WHERE sender_type = 'agent'").fetchall()
+    finally:
+        conn.close()
+    assert messages == []
+
+
 def test_process_next_job_reply_with_new_mention_enqueues_follow_up(db, monkeypatch):
     conn = get_connection()
     bob_id = _create_agent(conn, name="bob")

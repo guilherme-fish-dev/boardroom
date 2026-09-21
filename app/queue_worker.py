@@ -405,6 +405,18 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
 
     hidden_kind = "wait_user" if needs_user_action else None
 
+    # Atomically claim this job for finalization right before the write that matters:
+    # inserting the agent's reply. Only proceeds if the job is still 'processing' — if
+    # something else already finalized it (rowcount 0), some other execution got here
+    # first, so this one must not insert the same reply a second time. This also replaces
+    # the two separate "SET status = 'done'" updates the two branches below used to do.
+    cur = conn.execute(
+        "UPDATE queue_jobs SET status = 'done' WHERE id = ? AND status = 'processing'",
+        (job["id"],),
+    )
+    if cur.rowcount == 0:
+        return
+
     cur = conn.execute(
         "INSERT INTO messages (conversation_id, sender_type, sender_id, content, hidden_kind) "
         "VALUES (?, 'agent', ?, ?, ?)",
@@ -413,7 +425,6 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
     agent_message_id = cur.lastrowid
 
     if needs_user_action:
-        conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
         cur_cancel = conn.execute(
             "UPDATE queue_jobs SET status = 'error' WHERE conversation_id = ? AND status = 'pending'",
             (job["conversation_id"],),
@@ -423,19 +434,21 @@ def _process_agent_turn(conn: sqlite3.Connection, job: sqlite3.Row) -> None:
         )
         return
 
-    # Count active jobs (this job is still 'processing' at this point) to decide whether the
-    # conversation's queue has room for a follow-up job from this reply. Antes da introdução de
-    # múltiplas conversas por grupo, esse limite era por grupo; agora é por conversa individual —
-    # um grupo com várias conversas ativas pode ter mais jobs simultâneos no total do que antes.
+    # Count active jobs, counting this job itself as part of the load even though it was
+    # already marked 'done' just above (by the atomic finalization guard) — this decides
+    # whether the conversation's queue has room for a follow-up job from this reply, and
+    # should reflect the same load this job represented while it was still running. Antes
+    # da introdução de múltiplas conversas por grupo, esse limite era por grupo; agora é por
+    # conversa individual — um grupo com várias conversas ativas pode ter mais jobs
+    # simultâneos no total do que antes.
     # A setting continua se chamando "max_pending_per_group" (nome desatualizado) porque renomeá-la
     # tocaria settings.py e o frontend, fora do escopo desta migração.
     max_pending = int(_get_setting(conn, "max_pending_per_group") or "20")
     active_count = conn.execute(
-        "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? AND status IN ('pending','processing')",
-        (job["conversation_id"],),
+        "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? "
+        "AND (status IN ('pending','processing') OR id = ?)",
+        (job["conversation_id"], job["id"]),
     ).fetchone()["c"]
-
-    conn.execute("UPDATE queue_jobs SET status = 'done' WHERE id = ?", (job["id"],))
 
     if active_count >= max_pending:
         if extract_mentions(reply):
