@@ -313,6 +313,9 @@ async function loadMembers(groupId) {
   if (state.agents.length === 0) {
     await loadAgents();
   }
+  if (state.agentCategories.length === 0) {
+    await loadAgentCategories();
+  }
   state.members = await api(`/api/groups/${groupId}/members`);
   renderMembers(groupId);
 }
@@ -347,7 +350,28 @@ function renderMembers(groupId) {
     list.appendChild(badge);
   }
 
+  const categoryFilter = document.getElementById("member-category-filter");
+  const previousFilterValue = categoryFilter.value;
+  categoryFilter.innerHTML = "";
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "Todas as categorias";
+  categoryFilter.appendChild(allOption);
+  for (const category of state.agentCategories) {
+    const option = document.createElement("option");
+    option.value = category.id;
+    option.textContent = category.name;
+    categoryFilter.appendChild(option);
+  }
+  categoryFilter.value = previousFilterValue;
+  categoryFilter.onchange = () => renderAddMemberOptions(groupId);
+
+  renderAddMemberOptions(groupId);
+}
+
+function renderAddMemberOptions(groupId) {
   const select = document.getElementById("add-member-select");
+  const categoryFilterValue = document.getElementById("member-category-filter").value;
   select.innerHTML = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
@@ -356,6 +380,7 @@ function renderMembers(groupId) {
   const memberIds = new Set(state.members.map((m) => m.id));
   for (const agent of state.agents) {
     if (memberIds.has(agent.id)) continue;
+    if (categoryFilterValue && !agent.category_ids.includes(Number(categoryFilterValue))) continue;
     const option = document.createElement("option");
     option.value = agent.id;
     option.textContent = agent.name;
