@@ -92,7 +92,13 @@ def stop_conversation(group_id: int, conversation_id: int) -> StopResultOut:
     an LLM request already in flight — can't be aborted mid-call (chat_completion has no
     cancellation hook, and killing the server would also orphan and retry it on restart per
     _recover_orphaned_processing_jobs), so it's left to finish; its count is returned so the
-    UI can tell the user one more reply may still land."""
+    UI can tell the user one more reply may still land.
+
+    Also sets conversations.stopped_at, a durable flag enqueue_mentions checks before creating
+    any new job. Without it, that one still-in-flight reply could @mention another agent and
+    re-enqueue a job that didn't exist yet when the UPDATE above ran — outside the reach of
+    this cancellation, and able to keep the mention chain going indefinitely. The flag is
+    cleared again the next time the user sends a message (see _resume_conversation)."""
     conn = get_connection()
     try:
         conversation = conn.execute(
@@ -101,6 +107,10 @@ def stop_conversation(group_id: int, conversation_id: int) -> StopResultOut:
         if conversation is None:
             raise HTTPException(status_code=404, detail="conversation not found")
 
+        conn.execute(
+            "UPDATE conversations SET stopped_at = datetime('now') WHERE id = ?",
+            (conversation_id,),
+        )
         cur = conn.execute(
             "UPDATE queue_jobs SET status = 'error' WHERE conversation_id = ? AND status = 'pending'",
             (conversation_id,),

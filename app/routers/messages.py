@@ -93,17 +93,26 @@ def enqueue_mentions(
     group. author_agent_id, when the content being scanned is itself an agent's own reply,
     excludes that agent from the jobs created — otherwise an agent that mentions its own name
     (e.g. quoting itself, or a persona prompt that has it sign its messages) would enqueue a
-    turn for itself and could keep doing so forever, one job triggering the next."""
-    names = extract_mentions(content)
-    if not names:
-        return
+    turn for itself and could keep doing so forever, one job triggering the next.
 
+    Also does nothing if the conversation has been stopped (conversations.stopped_at set):
+    without this check, a reply that was already "in flight" when the user clicked stop would
+    still land after stop_conversation's bulk UPDATE ran, and this call — made by queue_worker
+    right after inserting that reply — would enqueue a fresh job for whoever it @mentions,
+    completely outside the reach of the cancellation that already happened. That new job's own
+    reply can then @mention back, forming a chain the stop button can never actually stop."""
     conversation = conn.execute(
-        "SELECT group_id FROM conversations WHERE id = ?", (conversation_id,)
+        "SELECT group_id, stopped_at FROM conversations WHERE id = ?", (conversation_id,)
     ).fetchone()
     if conversation is None:
         # Defensive only: callers (post_message, post_image_message, queue_worker) always
         # pass a conversation_id they just confirmed exists.
+        return
+    if conversation["stopped_at"] is not None:
+        return
+
+    names = extract_mentions(content)
+    if not names:
         return
 
     member_rows = conn.execute(
@@ -201,6 +210,14 @@ def list_pending_jobs(conversation_id: int) -> list[PendingJobOut]:
     ]
 
 
+def _resume_conversation(conn: sqlite3.Connection, conversation_id: int) -> None:
+    """Clear a stop-conversation flag: a new user message is exactly the signal that the user
+    wants the conversation to continue, so it un-blocks enqueue_mentions again."""
+    conn.execute(
+        "UPDATE conversations SET stopped_at = NULL WHERE id = ?", (conversation_id,)
+    )
+
+
 def _maybe_enqueue_waiting_agent(
     conn: sqlite3.Connection, conversation_id: int, trigger_message_id: int, content: str
 ) -> bool:
@@ -248,6 +265,7 @@ def post_message(conversation_id: int, message: MessageIn) -> MessageOut:
             (conversation_id, message.content),
         )
         message_id = cur.lastrowid
+        _resume_conversation(conn, conversation_id)
         _maybe_enqueue_waiting_agent(conn, conversation_id, message_id, message.content)
         conn.commit()
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
@@ -300,6 +318,7 @@ async def post_image_message(
             "VALUES (?, NULL, 'describe_image', 0, ?)",
             (conversation_id, json.dumps({"image_path": str(dest), "message_id": message_id})),
         )
+        _resume_conversation(conn, conversation_id)
         _maybe_enqueue_waiting_agent(conn, conversation_id, message_id, content)
         conn.commit()
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
@@ -392,6 +411,7 @@ async def post_pdf_message(
             "VALUES (?, NULL, 'extract_pdf', 0, ?)",
             (conversation_id, json.dumps({"pdf_path": str(dest), "message_id": message_id})),
         )
+        _resume_conversation(conn, conversation_id)
         _maybe_enqueue_waiting_agent(conn, conversation_id, message_id, content)
         conn.commit()
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()

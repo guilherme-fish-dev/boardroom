@@ -111,6 +111,19 @@ def _ensure_pdf_path_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE messages ADD COLUMN pdf_path TEXT")
 
 
+def _ensure_conversations_stopped_at_column(conn: sqlite3.Connection) -> None:
+    """stopped_at is the durable record that the user clicked "stop": unlike the queue_jobs
+    status flip (which only touches rows that already exist at click time), this survives the
+    gap between clicking stop and an in-flight LLM call finishing. That in-flight reply's own
+    @mentions would otherwise re-enqueue new jobs — a chain of agents mentioning each other
+    that a one-time bulk UPDATE can never catch, because those jobs don't exist yet when stop
+    runs. enqueue_mentions checks this column before inserting anything; a new user message
+    clears it again, since that's the signal that the user wants the conversation to continue."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)")}
+    if "stopped_at" not in columns:
+        conn.execute("ALTER TABLE conversations ADD COLUMN stopped_at TEXT")
+
+
 def _ensure_queue_jobs_allows_extract_pdf(conn: sqlite3.Connection) -> None:
     """Adds 'extract_pdf' to the queue_jobs.job_type CHECK constraint by rebuilding the
     table (SQLite has no ALTER TABLE support for changing a CHECK constraint in place).
@@ -277,6 +290,7 @@ def init_db() -> None:
         _ensure_agent_subtitle_column(conn)
         _ensure_conversations_table(conn)
         _ensure_pdf_path_column(conn)
+        _ensure_conversations_stopped_at_column(conn)
         _ensure_queue_jobs_allows_extract_pdf(conn)
         _recover_orphaned_processing_jobs(conn)
         for key, value in DEFAULT_SETTINGS.items():

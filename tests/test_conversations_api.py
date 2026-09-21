@@ -2,6 +2,7 @@ from app.db import get_connection
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.routers.messages import enqueue_mentions
 
 
 def make_client(db):
@@ -148,6 +149,94 @@ def test_stop_cancels_pending_jobs_and_leaves_processing(db):
         conn.close()
     assert statuses == {"error", "processing"}
     assert "1 resposta" in system_message["content"]
+
+
+def test_stop_blocks_mention_enqueued_by_reply_already_in_flight(db):
+    """Reproduces the race the user hit: a job that was 'processing' when stop was clicked
+    finishes afterwards and its reply @mentions another agent. Before the stopped_at flag,
+    enqueue_mentions had no way to know stop had been requested and created a fresh job
+    anyway — letting the mention chain outlive the cancellation. It must now be a no-op."""
+    client = make_client(db)
+    group = _create_group(client)
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+
+    conn = get_connection()
+    try:
+        leo_id = conn.execute(
+            "INSERT INTO agents (name, persona_prompt, model_name) VALUES ('leo', 'p', 'm')"
+        ).lastrowid
+        ana_id = conn.execute(
+            "INSERT INTO agents (name, persona_prompt, model_name) VALUES ('ana', 'p', 'm')"
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO group_members (group_id, agent_id) VALUES (?, ?), (?, ?)",
+            (group["id"], leo_id, group["id"], ana_id),
+        )
+        trigger_id = conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+            "VALUES (?, 'agent', ?, 'ainda processando...')",
+            (conversation["id"], leo_id),
+        ).lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = client.post(f"/api/groups/{group['id']}/conversations/{conversation['id']}/stop")
+    assert resp.status_code == 200
+
+    # Simula o que queue_worker._process_agent_turn faz ao terminar: insere a resposta do job
+    # que já estava em andamento e tenta encadear a menção que ela contém.
+    conn = get_connection()
+    try:
+        enqueue_mentions(
+            conn, conversation["id"], trigger_id, "@ana pode confirmar isso?", author_agent_id=leo_id
+        )
+        conn.commit()
+        pending = conn.execute(
+            "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? AND status = 'pending'",
+            (conversation["id"],),
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+    assert pending == 0
+
+
+def test_new_user_message_resumes_mentions_after_stop(db):
+    """A stopped conversation isn't stopped forever: sending a new message is the user's
+    signal to continue, so it must clear stopped_at and let @mentions enqueue jobs again."""
+    client = make_client(db)
+    group = _create_group(client)
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+
+    conn = get_connection()
+    try:
+        ana_id = conn.execute(
+            "INSERT INTO agents (name, persona_prompt, model_name) VALUES ('ana', 'p', 'm')"
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO group_members (group_id, agent_id) VALUES (?, ?)", (group["id"], ana_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    client.post(f"/api/groups/{group['id']}/conversations/{conversation['id']}/stop")
+
+    resp = client.post(
+        f"/api/conversations/{conversation['id']}/messages", json={"content": "@ana oi de novo"}
+    )
+    assert resp.status_code == 201
+
+    conn = get_connection()
+    try:
+        pending = conn.execute(
+            "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? AND agent_id = ? "
+            "AND status = 'pending'",
+            (conversation["id"], ana_id),
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+    assert pending == 1
 
 
 def test_stop_404_for_unknown_conversation(db):
