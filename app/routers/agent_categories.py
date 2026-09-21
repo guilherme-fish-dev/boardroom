@@ -105,17 +105,25 @@ def add_agent_category_members(category_id: int, payload: AgentCategoryMemberIds
         if category is None:
             raise HTTPException(status_code=404, detail="category not found")
 
-        # Validar a existência de cada agent_id ANTES de inserir, em vez de confiar em
-        # "INSERT OR IGNORE" sozinho: OR IGNORE também suprime a violação de FK de um
+        # Validar a existência de todos os agent_ids ANTES de inserir, em vez de confiar
+        # em "INSERT OR IGNORE" sozinho: OR IGNORE também suprime a violação de FK de um
         # agent_id inexistente (mesma armadilha já vista na sincronização de categorias
         # em app/routers/agents.py), o que faria um id inválido ser silenciosamente
-        # ignorado em vez de retornar 400. Validando antes, o INSERT OR IGNORE abaixo só
-        # precisa lidar com o caso inofensivo de "já é membro" (colisão de PK).
+        # ignorado em vez de retornar 400. A validação é feita em uma única query batched
+        # (IN (...)) em vez de uma SELECT por id. Validando antes, o INSERT OR IGNORE
+        # abaixo só precisa lidar com o caso inofensivo de "já é membro" (colisão de PK).
         agent_ids = list(dict.fromkeys(payload.agent_ids))
-        for agent_id in agent_ids:
-            agent = conn.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)).fetchone()
-            if agent is None:
-                raise HTTPException(status_code=400, detail=f"agent {agent_id} not found")
+        if agent_ids:
+            placeholders = ",".join("?" * len(agent_ids))
+            existing_ids = {
+                row["id"]
+                for row in conn.execute(
+                    f"SELECT id FROM agents WHERE id IN ({placeholders})", agent_ids
+                ).fetchall()
+            }
+            missing_ids = [agent_id for agent_id in agent_ids if agent_id not in existing_ids]
+            if missing_ids:
+                raise HTTPException(status_code=400, detail=f"agents not found: {missing_ids}")
 
         for agent_id in agent_ids:
             conn.execute(
@@ -137,6 +145,9 @@ def remove_agent_category_members(category_id: int, payload: AgentCategoryMember
         ).fetchone()
         if category is None:
             raise HTTPException(status_code=404, detail="category not found")
+        # Sem validação prévia de agent_ids aqui: diferente do INSERT em add_agent_category_members,
+        # um DELETE contra uma linha inexistente (agent_id inválido ou não membro) já é um no-op
+        # seguro, então não há erro silencioso a evitar.
         for agent_id in payload.agent_ids:
             conn.execute(
                 "DELETE FROM agent_category_members WHERE category_id = ? AND agent_id = ?",
