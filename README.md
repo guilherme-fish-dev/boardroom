@@ -23,6 +23,12 @@ uvicorn app.main:app --reload --port 8000
 
 Abra `http://localhost:8000`.
 
+> ⚠️ **Sem autenticação:** o Boardroom não tem login nem controle de acesso — quem
+> alcançar a porta do servidor tem acesso completo. `start.bat` sobe o servidor em
+> `0.0.0.0`, então qualquer dispositivo na mesma rede consegue acessar. Não exponha essa
+> porta para a internet (nem via port-forward, túnel, etc.) sem colocar uma camada de
+> autenticação/proxy na frente.
+
 ### Voz (opcional)
 
 Pra ouvir as mensagens em voz alta, baixe a voz em português do
