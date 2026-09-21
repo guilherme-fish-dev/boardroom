@@ -453,9 +453,16 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-#message-form { display: flex; flex-direction: row; gap: 8px; align-items: center; }
+#message-form { display: flex; flex-direction: row; gap: 8px; align-items: flex-end; }
 #message-input-wrapper { position: relative; flex: 1; }
-#message-input { width: 100%; }
+#message-input {
+  width: 100%;
+  min-height: 0;
+  max-height: 200px;
+  resize: none;
+  overflow-y: auto;
+  margin-bottom: 0;
+}
 
 #mention-suggestions {
   position: absolute;

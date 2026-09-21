@@ -1437,27 +1437,39 @@ function updateMentionState() {
 
 const mentionInputEl = document.getElementById("message-input");
 
+function autoGrowMessageInput() {
+  mentionInputEl.style.height = "auto";
+  mentionInputEl.style.height = `${mentionInputEl.scrollHeight}px`;
+}
+
 mentionInputEl.addEventListener("input", () => {
   updateMentionState();
+  autoGrowMessageInput();
 });
 
 mentionInputEl.addEventListener("keydown", (e) => {
-  if (!state.mention.active) return;
-  if (e.key === "ArrowDown") {
+  if (state.mention.active) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      state.mention.activeIndex = (state.mention.activeIndex + 1) % state.mention.candidates.length;
+      renderMentionSuggestions();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      state.mention.activeIndex =
+        (state.mention.activeIndex - 1 + state.mention.candidates.length) % state.mention.candidates.length;
+      renderMentionSuggestions();
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      applyMentionCandidate(state.mention.candidates[state.mention.activeIndex]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeMentionSuggestions();
+    }
+    return;
+  }
+  if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
-    state.mention.activeIndex = (state.mention.activeIndex + 1) % state.mention.candidates.length;
-    renderMentionSuggestions();
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    state.mention.activeIndex =
-      (state.mention.activeIndex - 1 + state.mention.candidates.length) % state.mention.candidates.length;
-    renderMentionSuggestions();
-  } else if (e.key === "Enter" || e.key === "Tab") {
-    e.preventDefault();
-    applyMentionCandidate(state.mention.candidates[state.mention.activeIndex]);
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closeMentionSuggestions();
+    document.getElementById("message-form").requestSubmit();
   }
 });
 
@@ -1505,6 +1517,7 @@ document.getElementById("message-form").onsubmit = async (e) => {
     });
   }
   textInput.value = "";
+  autoGrowMessageInput();
   await pollMessages();
   await pollPendingStatus();
 };
