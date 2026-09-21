@@ -293,3 +293,101 @@ def test_update_agent_renamed_to_all_rejected(db):
         },
     )
     assert resp.status_code == 422
+
+
+def test_create_agent_with_categories(db):
+    client = make_client(db)
+    category = client.post("/api/agent-categories", json={"name": "financeiro"}).json()
+
+    resp = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+            "category_ids": [category["id"]],
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["category_ids"] == [category["id"]]
+
+    resp = client.get("/api/agents")
+    assert resp.json()[0]["category_ids"] == [category["id"]]
+
+
+def test_create_agent_without_categories_defaults_to_empty_list(db):
+    client = make_client(db)
+    resp = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["category_ids"] == []
+
+
+def test_update_agent_replaces_categories(db):
+    client = make_client(db)
+    cat_a = client.post("/api/agent-categories", json={"name": "financeiro"}).json()
+    cat_b = client.post("/api/agent-categories", json={"name": "juridico"}).json()
+    agent = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+            "category_ids": [cat_a["id"]],
+        },
+    ).json()
+
+    resp = client.put(
+        f"/api/agents/{agent['id']}",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+            "category_ids": [cat_b["id"]],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["category_ids"] == [cat_b["id"]]
+
+
+def test_create_agent_with_duplicate_category_ids_is_idempotent(db):
+    client = make_client(db)
+    category = client.post("/api/agent-categories", json={"name": "financeiro"}).json()
+
+    resp = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+            "category_ids": [category["id"], category["id"]],
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["category_ids"] == [category["id"]]
+
+
+def test_create_agent_with_unknown_category_id_returns_400(db):
+    client = make_client(db)
+    resp = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+            "category_ids": [9999],
+        },
+    )
+    assert resp.status_code == 400

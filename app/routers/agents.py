@@ -15,6 +15,7 @@ class AgentIn(BaseModel):
     subtitle: str = ""
     model_name: str
     vision_capable: bool = False
+    category_ids: list[int] = []
 
     @field_validator("name")
     @classmethod
@@ -32,7 +33,27 @@ class AgentOut(AgentIn):
     created_at: str
 
 
-def _row_to_agent(row: sqlite3.Row) -> AgentOut:
+def _category_ids_for_agent(conn: sqlite3.Connection, agent_id: int) -> list[int]:
+    rows = conn.execute(
+        "SELECT category_id FROM agent_category_members WHERE agent_id = ? ORDER BY category_id",
+        (agent_id,),
+    ).fetchall()
+    return [r["category_id"] for r in rows]
+
+
+def _sync_agent_categories(conn: sqlite3.Connection, agent_id: int, category_ids: list[int]) -> None:
+    conn.execute("DELETE FROM agent_category_members WHERE agent_id = ?", (agent_id,))
+    # Dedupe (preserving order) instead of using INSERT OR IGNORE: OR IGNORE would also
+    # suppress the FK violation for a genuinely invalid category_id, which we need to
+    # surface as an IntegrityError (see the 400 handling in create/update_agent below).
+    for category_id in dict.fromkeys(category_ids):
+        conn.execute(
+            "INSERT INTO agent_category_members (category_id, agent_id) VALUES (?, ?)",
+            (category_id, agent_id),
+        )
+
+
+def _row_to_agent(conn: sqlite3.Connection, row: sqlite3.Row) -> AgentOut:
     return AgentOut(
         id=row["id"],
         name=row["name"],
@@ -41,6 +62,7 @@ def _row_to_agent(row: sqlite3.Row) -> AgentOut:
         model_name=row["model_name"],
         vision_capable=bool(row["vision_capable"]),
         created_at=row["created_at"],
+        category_ids=_category_ids_for_agent(conn, row["id"]),
     )
 
 
@@ -49,9 +71,10 @@ def list_agents() -> list[AgentOut]:
     conn = get_connection()
     try:
         rows = conn.execute("SELECT * FROM agents ORDER BY id").fetchall()
+        result = [_row_to_agent(conn, r) for r in rows]
     finally:
         conn.close()
-    return [_row_to_agent(r) for r in rows]
+    return result
 
 
 @router.post("", response_model=AgentOut, status_code=201)
@@ -72,11 +95,17 @@ def create_agent(agent: AgentIn) -> AgentOut:
             )
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=409, detail="agent name already exists")
+        agent_id = cur.lastrowid
+        try:
+            _sync_agent_categories(conn, agent_id, agent.category_ids)
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=400, detail="invalid category_id")
         conn.commit()
-        row = conn.execute("SELECT * FROM agents WHERE id = ?", (cur.lastrowid,)).fetchone()
+        row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        result = _row_to_agent(conn, row)
     finally:
         conn.close()
-    return _row_to_agent(row)
+    return result
 
 
 @router.put("/{agent_id}", response_model=AgentOut)
@@ -100,11 +129,16 @@ def update_agent(agent_id: int, agent: AgentIn) -> AgentOut:
             raise HTTPException(status_code=409, detail="agent name already exists")
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="agent not found")
+        try:
+            _sync_agent_categories(conn, agent_id, agent.category_ids)
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=400, detail="invalid category_id")
         conn.commit()
         row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        result = _row_to_agent(conn, row)
     finally:
         conn.close()
-    return _row_to_agent(row)
+    return result
 
 
 PERSONA_SYSTEM_PROMPT = (

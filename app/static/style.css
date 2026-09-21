@@ -264,6 +264,31 @@ body {
 }
 .member-badge button:hover { color: var(--danger); }
 
+.category-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 3px 6px 3px 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin: 0 6px 6px 0;
+}
+.category-chip button {
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  transition: color 150ms ease;
+}
+.category-chip button:hover { color: var(--danger); }
+
+#agent-category-checkboxes { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 12px; }
+
 .message-delete-btn {
   background: none;
   border: none;

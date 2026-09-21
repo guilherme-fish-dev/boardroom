@@ -539,3 +539,53 @@ def test_init_db_resumes_extract_pdf_migration_interrupted_after_rename(tmp_path
     assert old_job["job_type"] == "describe_image"
     assert old_job["status"] == "done"
     assert new_job["job_type"] == "extract_pdf"
+
+
+def test_init_db_creates_agent_category_tables(db):
+    conn = get_connection()
+    try:
+        tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    finally:
+        conn.close()
+    assert {"agent_categories", "agent_category_members"} <= tables
+
+
+def test_agent_category_members_cascade_on_category_delete(db):
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO agents (id, name, persona_prompt, model_name) VALUES (1, 'bob', 'x', 'm')")
+        conn.execute("INSERT INTO agent_categories (id, name) VALUES (1, 'financeiro')")
+        conn.execute("INSERT INTO agent_category_members (category_id, agent_id) VALUES (1, 1)")
+        conn.commit()
+
+        conn.execute("DELETE FROM agent_categories WHERE id = 1")
+        conn.commit()
+
+        members = conn.execute("SELECT * FROM agent_category_members").fetchall()
+        agents = conn.execute("SELECT * FROM agents").fetchall()
+    finally:
+        conn.close()
+    assert members == []
+    assert len(agents) == 1  # apagar a categoria não apaga o agente
+
+
+def test_agent_category_members_cascade_on_agent_delete(db):
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO agents (id, name, persona_prompt, model_name) VALUES (1, 'bob', 'x', 'm')")
+        conn.execute("INSERT INTO agent_categories (id, name) VALUES (1, 'financeiro')")
+        conn.execute("INSERT INTO agent_category_members (category_id, agent_id) VALUES (1, 1)")
+        conn.commit()
+
+        conn.execute("DELETE FROM agents WHERE id = 1")
+        conn.commit()
+
+        members = conn.execute("SELECT * FROM agent_category_members").fetchall()
+        categories = conn.execute("SELECT * FROM agent_categories").fetchall()
+    finally:
+        conn.close()
+    assert members == []
+    assert len(categories) == 1  # apagar o agente não apaga a categoria
