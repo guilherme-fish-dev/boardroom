@@ -111,16 +111,21 @@ def enqueue_mentions(
     if conversation["stopped_at"] is not None:
         return
 
+    # SQLite's own lower() is ASCII-only (it doesn't lowercase e.g. "Í" to "í"), so it can't
+    # be used to build these lookup keys — it would leave a name like "Ícaro Rangel" as
+    # "Ícaro rangel", never matching resolve_mentions' Python-lowercased (Unicode-aware) "all
+    # candidates" set below. Selecting the raw name and lowercasing it in Python keeps both
+    # sides consistent.
     member_rows = conn.execute(
         """
-        SELECT agents.id, lower(agents.name) AS name FROM agents
+        SELECT agents.id, agents.name FROM agents
         JOIN group_members ON group_members.agent_id = agents.id
         WHERE group_members.group_id = ?
         ORDER BY agents.id
         """,
         (conversation["group_id"],),
     ).fetchall()
-    agent_ids_by_name = {row["name"]: row["id"] for row in member_rows}
+    agent_ids_by_name = {row["name"].lower(): row["id"] for row in member_rows}
 
     # resolve_mentions (not extract_mentions) so a multi-word agent name like "Osvaldo
     # Tibúrcio" is matched whole against agent_ids_by_name's full names below, instead of

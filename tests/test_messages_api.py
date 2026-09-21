@@ -123,6 +123,25 @@ def test_post_message_mentioning_multi_word_agent_name_creates_job(db):
     assert jobs[0]["agent_id"] == agent["id"]
 
 
+def test_post_message_mentioning_agent_name_starting_with_accented_letter_creates_job(db):
+    client = make_client(db)
+    group, agent, conversation = _setup_group_with_agent(client, agent_name="Ícaro Rangel")
+
+    resp = client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "@Ícaro Rangel, sua vez"},
+    )
+    assert resp.status_code == 201
+
+    conn = get_connection()
+    try:
+        jobs = conn.execute("SELECT * FROM queue_jobs").fetchall()
+    finally:
+        conn.close()
+    assert len(jobs) == 1
+    assert jobs[0]["agent_id"] == agent["id"]
+
+
 def test_post_message_mentioning_non_member_creates_no_job(db):
     client = make_client(db)
     group, agent, conversation = _setup_group_with_agent(client)
