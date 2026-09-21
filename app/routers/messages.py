@@ -134,6 +134,21 @@ def enqueue_mentions(
     if not names:
         return
 
+    # Agents restricted to human-only mentions in this conversation: an @mention of one of
+    # these coming from another agent's own reply (author_agent_id is not None) is silently
+    # dropped below instead of enqueuing a job — only a human-authored message can trigger
+    # them. Skipped entirely for human-authored content, which is always allowed regardless.
+    restricted_agent_ids: set[int] = set()
+    if author_agent_id is not None:
+        restricted_agent_ids = {
+            row["agent_id"]
+            for row in conn.execute(
+                "SELECT agent_id FROM conversation_agent_mention_settings "
+                "WHERE conversation_id = ? AND human_only_mention = 1",
+                (conversation_id,),
+            ).fetchall()
+        }
+
     # Preserve the text order. At @all, expand to every member in a stable order; an
     # explicit mention of a member already expanded by @all must not create a duplicate job.
     mentioned_agent_ids: list[int] = []
@@ -151,6 +166,8 @@ def enqueue_mentions(
 
     for agent_id in mentioned_agent_ids:
         if agent_id == author_agent_id:
+            continue
+        if agent_id in restricted_agent_ids:
             continue
         if author_agent_id is not None and _pair_exchange_count(
             conn, conversation_id, author_agent_id, agent_id

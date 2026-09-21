@@ -245,3 +245,115 @@ def test_stop_404_for_unknown_conversation(db):
 
     resp = client.post(f"/api/groups/{group['id']}/conversations/9999/stop")
     assert resp.status_code == 404
+
+
+def _setup_two_agents(client, group):
+    leo = client.post(
+        "/api/agents", json={"name": "leo", "persona_prompt": "p", "model_name": "m", "vision_capable": False}
+    ).json()
+    ana = client.post(
+        "/api/agents", json={"name": "ana", "persona_prompt": "p", "model_name": "m", "vision_capable": False}
+    ).json()
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": leo["id"]})
+    client.post(f"/api/groups/{group['id']}/members", json={"agent_id": ana["id"]})
+    return leo, ana
+
+
+def test_agent_mention_setting_starts_unset(db):
+    client = make_client(db)
+    group = _create_group(client)
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+    _setup_two_agents(client, group)
+
+    resp = client.get(f"/api/groups/{group['id']}/conversations/{conversation['id']}/agent-mention-settings")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_set_agent_mention_setting_blocks_agent_authored_mention_but_not_human(db):
+    """The core behavior: with human_only_mention=1 for 'ana', an agent's own reply
+    @mentioning her must not enqueue a job, but a human-authored message @mentioning her
+    still works."""
+    client = make_client(db)
+    group = _create_group(client)
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+    leo, ana = _setup_two_agents(client, group)
+
+    resp = client.put(
+        f"/api/groups/{group['id']}/conversations/{conversation['id']}/agent-mention-settings/{ana['id']}",
+        json={"human_only_mention": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"agent_id": ana["id"], "human_only_mention": True}
+
+    conn = get_connection()
+    try:
+        trigger_id = conn.execute(
+            "INSERT INTO messages (conversation_id, sender_type, sender_id, content) "
+            "VALUES (?, 'agent', ?, 'oi @ana')",
+            (conversation["id"], leo["id"]),
+        ).lastrowid
+        conn.commit()
+        enqueue_mentions(conn, conversation["id"], trigger_id, "oi @ana", author_agent_id=leo["id"])
+        conn.commit()
+        agent_authored_jobs = conn.execute(
+            "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? AND agent_id = ?",
+            (conversation["id"], ana["id"]),
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+    assert agent_authored_jobs == 0
+
+    resp = client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "@ana oi"})
+    assert resp.status_code == 201
+    conn = get_connection()
+    try:
+        human_authored_jobs = conn.execute(
+            "SELECT COUNT(*) AS c FROM queue_jobs WHERE conversation_id = ? AND agent_id = ?",
+            (conversation["id"], ana["id"]),
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+    assert human_authored_jobs == 1
+
+
+def test_set_agent_mention_setting_404_for_agent_not_in_group(db):
+    client = make_client(db)
+    group = _create_group(client)
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+    outsider = client.post(
+        "/api/agents", json={"name": "fora", "persona_prompt": "p", "model_name": "m", "vision_capable": False}
+    ).json()
+
+    resp = client.put(
+        f"/api/groups/{group['id']}/conversations/{conversation['id']}/agent-mention-settings/{outsider['id']}",
+        json={"human_only_mention": True},
+    )
+    assert resp.status_code == 404
+
+
+def test_select_all_shortcut_sets_every_member_then_clears_them(db):
+    client = make_client(db)
+    group = _create_group(client)
+    conversation = client.get(f"/api/groups/{group['id']}/conversations").json()[0]
+    leo, ana = _setup_two_agents(client, group)
+
+    resp = client.put(
+        f"/api/groups/{group['id']}/conversations/{conversation['id']}/agent-mention-settings",
+        json={"human_only_mention": True},
+    )
+    assert resp.status_code == 200
+    assert {row["agent_id"]: row["human_only_mention"] for row in resp.json()} == {
+        leo["id"]: True,
+        ana["id"]: True,
+    }
+
+    resp = client.put(
+        f"/api/groups/{group['id']}/conversations/{conversation['id']}/agent-mention-settings",
+        json={"human_only_mention": False},
+    )
+    assert resp.status_code == 200
+    assert {row["agent_id"]: row["human_only_mention"] for row in resp.json()} == {
+        leo["id"]: False,
+        ana["id"]: False,
+    }

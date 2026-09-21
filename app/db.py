@@ -73,6 +73,13 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS conversation_agent_mention_settings (
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    human_only_mention INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (conversation_id, agent_id)
+);
 """
 
 DEFAULT_SETTINGS = {

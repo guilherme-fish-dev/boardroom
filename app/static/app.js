@@ -8,6 +8,7 @@ const state = {
   agentCategories: [],
   members: [],
   mention: { active: false, start: -1, end: -1, activeIndex: 0, candidates: [] },
+  agentMentionSettings: {},
   lastMessageId: 0,
   pollTimer: null,
   pollGeneration: 0,
@@ -318,9 +319,43 @@ async function selectConversation(conversationId) {
   document.getElementById("stop-queue-btn").classList.add("hidden");
   renderConversationList();
   renderConversationContext();
+  await loadAgentMentionSettings();
   await refreshHiddenMessages();
   await pollMessages();
   await pollPendingStatus();
+}
+
+async function loadAgentMentionSettings() {
+  if (!state.activeGroupId || !state.activeConversationId) return;
+  const settings = await api(
+    `/api/groups/${state.activeGroupId}/conversations/${state.activeConversationId}/agent-mention-settings`
+  );
+  state.agentMentionSettings = {};
+  for (const setting of settings) {
+    state.agentMentionSettings[setting.agent_id] = setting.human_only_mention;
+  }
+  renderMembers(state.activeGroupId);
+}
+
+async function setAgentMentionSetting(agentId, humanOnlyMention) {
+  await api(
+    `/api/groups/${state.activeGroupId}/conversations/${state.activeConversationId}/agent-mention-settings/${agentId}`,
+    { method: "PUT", body: JSON.stringify({ human_only_mention: humanOnlyMention }) }
+  );
+  state.agentMentionSettings[agentId] = humanOnlyMention;
+  renderMembers(state.activeGroupId);
+}
+
+async function setAllAgentMentionSettings(humanOnlyMention) {
+  const settings = await api(
+    `/api/groups/${state.activeGroupId}/conversations/${state.activeConversationId}/agent-mention-settings`,
+    { method: "PUT", body: JSON.stringify({ human_only_mention: humanOnlyMention }) }
+  );
+  state.agentMentionSettings = {};
+  for (const setting of settings) {
+    state.agentMentionSettings[setting.agent_id] = setting.human_only_mention;
+  }
+  renderMembers(state.activeGroupId);
 }
 
 async function loadMembers(groupId) {
@@ -352,6 +387,22 @@ function renderMembers(groupId) {
     const name = document.createElement("span");
     name.textContent = member.name;
     badge.appendChild(name);
+
+    const humanOnly = !!state.agentMentionSettings[member.id];
+    const lockBtn = document.createElement("button");
+    lockBtn.type = "button";
+    lockBtn.className = "member-lock-btn" + (humanOnly ? " active" : "");
+    lockBtn.textContent = humanOnly ? "🔒" : "🔓";
+    lockBtn.title = humanOnly
+      ? `Só eu posso acionar ${member.name} nesta conversa — clique para permitir que outros agentes também mencionem`
+      : `Permitir que outros agentes acionem ${member.name} nesta conversa — clique para restringir só a mim`;
+    lockBtn.setAttribute(
+      "aria-label",
+      humanOnly ? `Permitir que agentes mencionem ${member.name}` : `Restringir menção a ${member.name} só a mim`
+    );
+    lockBtn.onclick = () => setAgentMentionSetting(member.id, !humanOnly);
+    badge.appendChild(lockBtn);
+
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.textContent = "×";
@@ -362,6 +413,15 @@ function renderMembers(groupId) {
     };
     badge.appendChild(removeBtn);
     list.appendChild(badge);
+  }
+
+  const selectAllRow = document.getElementById("member-select-all-mention");
+  if (selectAllRow) {
+    const allRestricted =
+      state.members.length > 0 && state.members.every((m) => !!state.agentMentionSettings[m.id]);
+    selectAllRow.checked = allRestricted;
+    selectAllRow.disabled = !state.activeConversationId || state.members.length === 0;
+    selectAllRow.onchange = () => setAllAgentMentionSettings(selectAllRow.checked);
   }
 
   const categoryFilter = document.getElementById("member-category-filter");

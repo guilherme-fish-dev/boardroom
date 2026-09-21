@@ -80,6 +80,104 @@ def update_conversation(group_id: int, conversation_id: int, conversation: Conve
     return _row_to_conversation(row)
 
 
+class AgentMentionSettingIn(BaseModel):
+    human_only_mention: bool
+
+
+class AgentMentionSettingOut(BaseModel):
+    agent_id: int
+    human_only_mention: bool
+
+
+def _require_conversation(conn: sqlite3.Connection, group_id: int, conversation_id: int) -> None:
+    conversation = conn.execute(
+        "SELECT id FROM conversations WHERE id = ? AND group_id = ?", (conversation_id, group_id)
+    ).fetchone()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+
+
+@router.get("/{conversation_id}/agent-mention-settings", response_model=list[AgentMentionSettingOut])
+def list_agent_mention_settings(group_id: int, conversation_id: int) -> list[AgentMentionSettingOut]:
+    conn = get_connection()
+    try:
+        _require_conversation(conn, group_id, conversation_id)
+        rows = conn.execute(
+            "SELECT agent_id, human_only_mention FROM conversation_agent_mention_settings "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        AgentMentionSettingOut(agent_id=r["agent_id"], human_only_mention=bool(r["human_only_mention"]))
+        for r in rows
+    ]
+
+
+@router.put("/{conversation_id}/agent-mention-settings/{agent_id}", response_model=AgentMentionSettingOut)
+def set_agent_mention_setting(
+    group_id: int, conversation_id: int, agent_id: int, setting: AgentMentionSettingIn
+) -> AgentMentionSettingOut:
+    conn = get_connection()
+    try:
+        _require_conversation(conn, group_id, conversation_id)
+        member = conn.execute(
+            "SELECT 1 FROM group_members WHERE group_id = ? AND agent_id = ?", (group_id, agent_id)
+        ).fetchone()
+        if member is None:
+            raise HTTPException(status_code=404, detail="agent is not a member of this group")
+        conn.execute(
+            "INSERT INTO conversation_agent_mention_settings (conversation_id, agent_id, human_only_mention) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT (conversation_id, agent_id) DO UPDATE SET human_only_mention = excluded.human_only_mention",
+            (conversation_id, agent_id, int(setting.human_only_mention)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return AgentMentionSettingOut(agent_id=agent_id, human_only_mention=setting.human_only_mention)
+
+
+@router.put("/{conversation_id}/agent-mention-settings", response_model=list[AgentMentionSettingOut])
+def set_all_agent_mention_settings(
+    group_id: int, conversation_id: int, setting: AgentMentionSettingIn
+) -> list[AgentMentionSettingOut]:
+    """'Selecionar todos' shortcut: sets human_only_mention for every current member of the
+    conversation's group to the same value in one call. There is no separate persisted
+    "conversation-wide" flag — this just bulk-writes the same per-agent rows that
+    set_agent_mention_setting writes one at a time, so toggling it off later is a normal
+    bulk-clear rather than overriding some other stored state."""
+    conn = get_connection()
+    try:
+        _require_conversation(conn, group_id, conversation_id)
+        member_ids = [
+            row["agent_id"]
+            for row in conn.execute(
+                "SELECT agent_id FROM group_members WHERE group_id = ?", (group_id,)
+            ).fetchall()
+        ]
+        for agent_id in member_ids:
+            conn.execute(
+                "INSERT INTO conversation_agent_mention_settings (conversation_id, agent_id, human_only_mention) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT (conversation_id, agent_id) DO UPDATE SET human_only_mention = excluded.human_only_mention",
+                (conversation_id, agent_id, int(setting.human_only_mention)),
+            )
+        conn.commit()
+        rows = conn.execute(
+            "SELECT agent_id, human_only_mention FROM conversation_agent_mention_settings "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        AgentMentionSettingOut(agent_id=r["agent_id"], human_only_mention=bool(r["human_only_mention"]))
+        for r in rows
+    ]
+
+
 class StopResultOut(BaseModel):
     cancelled_pending: int
     still_processing: int
