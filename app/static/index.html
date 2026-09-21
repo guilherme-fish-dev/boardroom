@@ -162,6 +162,25 @@
             <button type="submit" class="btn-secondary">Criar categoria</button>
           </form>
         </div>
+        <div id="category-bulk-move" class="hidden">
+          <div class="label">Mover agentes — categoria selecionada: <strong id="active-category-name"></strong></div>
+          <div class="dual-listbox">
+            <div class="dual-listbox-column">
+              <div class="label">Disponíveis</div>
+              <input id="available-agents-search" placeholder="Buscar agente..." />
+              <select id="available-agents-select" multiple></select>
+            </div>
+            <div class="dual-listbox-actions">
+              <button type="button" id="add-to-category-btn" class="btn-secondary">Adicionar →</button>
+              <button type="button" id="remove-from-category-btn" class="btn-secondary">← Remover</button>
+            </div>
+            <div class="dual-listbox-column">
+              <div class="label">Nesta categoria</div>
+              <input id="category-members-search" placeholder="Buscar agente..." />
+              <select id="category-members-select" multiple></select>
+            </div>
+          </div>
+        </div>
       </div>
       <div id="view-settings" class="view hidden">
         <h2>Configurações</h2>

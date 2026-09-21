@@ -293,6 +293,19 @@ body {
 
 #agent-category-checkboxes { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 12px; }
 
+.category-chip.active { border-color: var(--accent); }
+
+.dual-listbox { display: flex; align-items: stretch; gap: 14px; margin-top: 10px; }
+.dual-listbox-column { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.dual-listbox-column select {
+  height: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+}
+.dual-listbox-actions { display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+
 .message-delete-btn {
   background: none;
   border: none;

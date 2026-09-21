@@ -15,6 +15,8 @@ const state = {
   groupSearchTerm: "",
   editingGroupId: null,
   agentsSubmenuOpen: false,
+  activeAgentCategoryId: null,
+  categoryMembers: [],
   ttsAvailable: false,
 };
 
@@ -799,8 +801,11 @@ function renderAgentCategoryList() {
   for (const category of state.agentCategories) {
     const chip = document.createElement("span");
     chip.className = "category-chip";
+    chip.classList.toggle("active", category.id === state.activeAgentCategoryId);
     const label = document.createElement("span");
     label.textContent = category.name;
+    label.style.cursor = "pointer";
+    label.onclick = () => selectActiveCategory(category.id);
     chip.appendChild(label);
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
@@ -815,6 +820,9 @@ function renderAgentCategoryList() {
       }
       const previouslyChecked = currentlyCheckedCategoryIds();
       await api(`/api/agent-categories/${category.id}`, { method: "DELETE" });
+      if (state.activeAgentCategoryId === category.id) {
+        await selectActiveCategory(null);
+      }
       state.agentCategories = await api("/api/agent-categories");
       renderAgentCategoryList();
       renderAgentCategoryCheckboxes(previouslyChecked.filter((id) => id !== category.id));
@@ -822,6 +830,55 @@ function renderAgentCategoryList() {
     };
     chip.appendChild(removeBtn);
     container.appendChild(chip);
+  }
+}
+
+async function selectActiveCategory(categoryId) {
+  state.activeAgentCategoryId = categoryId;
+  renderAgentCategoryList();
+  const bulkPanel = document.getElementById("category-bulk-move");
+  if (categoryId === null) {
+    bulkPanel.classList.add("hidden");
+    return;
+  }
+  bulkPanel.classList.remove("hidden");
+  const category = state.agentCategories.find((c) => c.id === categoryId);
+  document.getElementById("active-category-name").textContent = category ? category.name : "";
+  await loadCategoryMembers(categoryId);
+}
+
+async function loadCategoryMembers(categoryId) {
+  if (state.agents.length === 0) {
+    await loadAgents();
+  }
+  state.categoryMembers = await api(`/api/agent-categories/${categoryId}/members`);
+  renderCategoryBulkMove();
+}
+
+function renderCategoryBulkMove() {
+  const memberIds = new Set(state.categoryMembers.map((m) => m.id));
+  const availableSearch = document.getElementById("available-agents-search").value.trim().toLowerCase();
+  const memberSearch = document.getElementById("category-members-search").value.trim().toLowerCase();
+
+  const availableSelect = document.getElementById("available-agents-select");
+  availableSelect.innerHTML = "";
+  for (const agent of state.agents) {
+    if (memberIds.has(agent.id)) continue;
+    if (availableSearch && !agent.name.toLowerCase().includes(availableSearch)) continue;
+    const option = document.createElement("option");
+    option.value = agent.id;
+    option.textContent = agent.name;
+    availableSelect.appendChild(option);
+  }
+
+  const memberSelect = document.getElementById("category-members-select");
+  memberSelect.innerHTML = "";
+  for (const member of state.categoryMembers) {
+    if (memberSearch && !member.name.toLowerCase().includes(memberSearch)) continue;
+    const option = document.createElement("option");
+    option.value = member.id;
+    option.textContent = member.name;
+    memberSelect.appendChild(option);
   }
 }
 
@@ -1009,6 +1066,38 @@ document.getElementById("nav-agents-toggle").onclick = () => {
 document.getElementById("nav-agent-categories").onclick = async () => {
   showView("agent-categories");
   await loadAgentCategories();
+  await selectActiveCategory(null);
+};
+
+document.getElementById("available-agents-search").addEventListener("input", renderCategoryBulkMove);
+document.getElementById("category-members-search").addEventListener("input", renderCategoryBulkMove);
+
+document.getElementById("add-to-category-btn").onclick = async () => {
+  const select = document.getElementById("available-agents-select");
+  const agentIds = Array.from(select.selectedOptions).map((o) => Number(o.value));
+  if (agentIds.length === 0 || state.activeAgentCategoryId === null) return;
+  await api(`/api/agent-categories/${state.activeAgentCategoryId}/members/add`, {
+    method: "POST",
+    body: JSON.stringify({ agent_ids: agentIds }),
+  });
+  state.agentCategories = await api("/api/agent-categories");
+  renderAgentCategoryList();
+  await loadAgents();
+  await loadCategoryMembers(state.activeAgentCategoryId);
+};
+
+document.getElementById("remove-from-category-btn").onclick = async () => {
+  const select = document.getElementById("category-members-select");
+  const agentIds = Array.from(select.selectedOptions).map((o) => Number(o.value));
+  if (agentIds.length === 0 || state.activeAgentCategoryId === null) return;
+  await api(`/api/agent-categories/${state.activeAgentCategoryId}/members/remove`, {
+    method: "POST",
+    body: JSON.stringify({ agent_ids: agentIds }),
+  });
+  state.agentCategories = await api("/api/agent-categories");
+  renderAgentCategoryList();
+  await loadAgents();
+  await loadCategoryMembers(state.activeAgentCategoryId);
 };
 
 document.getElementById("nav-settings").onclick = async () => {
