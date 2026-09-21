@@ -141,6 +141,10 @@ body {
   transition: background-color 150ms ease, color 150ms ease;
 }
 .nav-icon { font-size: 14px; }
+.nav-caret { margin-left: auto; font-size: 11px; opacity: .7; }
+#nav-agents-toggle { display: flex; align-items: center; width: 100%; }
+.nav-submenu { display: flex; flex-direction: column; padding-left: 24px; }
+.nav-submenu button { text-align: left; }
 #groups-col nav button:hover { background: var(--surface); color: var(--ink); }
 #groups-col nav button.active { background: var(--surface); color: var(--ink); }
 

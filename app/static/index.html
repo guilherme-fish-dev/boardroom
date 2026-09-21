@@ -21,7 +21,13 @@
           </div>
         </div>
         <nav>
-          <button id="nav-agents" type="button"><span class="nav-icon">👥</span> Agentes</button>
+          <button id="nav-agents-toggle" type="button" aria-expanded="false">
+            <span class="nav-icon">👥</span> Agentes <span class="nav-caret">▾</span>
+          </button>
+          <div id="nav-agents-submenu" class="nav-submenu hidden">
+            <button id="nav-agents" type="button">Agentes</button>
+            <button id="nav-agent-categories" type="button">Categorias</button>
+          </div>
           <button id="nav-settings" type="button"><span class="nav-icon">⚙️</span> Configurações</button>
         </nav>
         <div class="sidebar-section">
@@ -118,14 +124,6 @@
       </div>
       <div id="view-agents" class="view hidden">
         <h2>Agentes</h2>
-        <div id="agent-categories-panel">
-          <div class="context-block-title">Categorias</div>
-          <div id="agent-category-list"></div>
-          <form id="agent-category-form">
-            <input id="agent-category-name" placeholder="Nova categoria" required />
-            <button type="submit" class="btn-secondary">Criar categoria</button>
-          </form>
-        </div>
         <ul id="agent-list"></ul>
         <form id="agent-form">
           <label>Nome (sem espaços)
@@ -154,6 +152,16 @@
             <button type="button" id="delete-agent-btn" class="btn-secondary hidden">Apagar agente</button>
           </div>
         </form>
+      </div>
+      <div id="view-agent-categories" class="view hidden">
+        <h2>Categorias</h2>
+        <div id="agent-categories-panel">
+          <div id="agent-category-list"></div>
+          <form id="agent-category-form">
+            <input id="agent-category-name" placeholder="Nova categoria" required />
+            <button type="submit" class="btn-secondary">Criar categoria</button>
+          </form>
+        </div>
       </div>
       <div id="view-settings" class="view hidden">
         <h2>Configurações</h2>

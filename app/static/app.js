@@ -14,6 +14,7 @@ const state = {
   editingAgentId: null,
   groupSearchTerm: "",
   editingGroupId: null,
+  agentsSubmenuOpen: false,
   ttsAvailable: false,
 };
 
@@ -78,13 +79,23 @@ async function api(path, options = {}) {
   return resp.json();
 }
 
+function updateAgentsSubmenu() {
+  const isAgentsSection = state.activeView === "agents" || state.activeView === "agent-categories";
+  const shouldShow = state.agentsSubmenuOpen || isAgentsSection;
+  document.getElementById("nav-agents-submenu").classList.toggle("hidden", !shouldShow);
+  document.getElementById("nav-agents-toggle").setAttribute("aria-expanded", String(shouldShow));
+  document.getElementById("nav-agents-toggle").classList.toggle("active", isAgentsSection);
+}
+
 function showView(name) {
   state.activeView = name;
   for (const view of document.querySelectorAll(".view")) {
     view.classList.toggle("hidden", view.id !== `view-${name}`);
   }
   document.getElementById("nav-agents").classList.toggle("active", name === "agents");
+  document.getElementById("nav-agent-categories").classList.toggle("active", name === "agent-categories");
   document.getElementById("nav-settings").classList.toggle("active", name === "settings");
+  updateAgentsSubmenu();
   if (name !== "channel") {
     for (const li of document.querySelectorAll("#group-list li")) {
       li.classList.remove("active");
@@ -987,6 +998,16 @@ document.getElementById("nav-agents").onclick = async () => {
   showView("agents");
   await loadAgents();
   await loadModels();
+  await loadAgentCategories();
+};
+
+document.getElementById("nav-agents-toggle").onclick = () => {
+  state.agentsSubmenuOpen = !state.agentsSubmenuOpen;
+  updateAgentsSubmenu();
+};
+
+document.getElementById("nav-agent-categories").onclick = async () => {
+  showView("agent-categories");
   await loadAgentCategories();
 };
 
