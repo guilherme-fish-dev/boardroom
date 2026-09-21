@@ -360,6 +360,24 @@ def test_update_agent_replaces_categories(db):
     assert resp.json()["category_ids"] == [cat_b["id"]]
 
 
+def test_create_agent_with_duplicate_category_ids_is_idempotent(db):
+    client = make_client(db)
+    category = client.post("/api/agent-categories", json={"name": "financeiro"}).json()
+
+    resp = client.post(
+        "/api/agents",
+        json={
+            "name": "bob",
+            "persona_prompt": "x",
+            "model_name": "qwen2.5-7b",
+            "vision_capable": False,
+            "category_ids": [category["id"], category["id"]],
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["category_ids"] == [category["id"]]
+
+
 def test_create_agent_with_unknown_category_id_returns_400(db):
     client = make_client(db)
     resp = client.post(

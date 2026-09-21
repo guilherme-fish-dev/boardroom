@@ -43,7 +43,10 @@ def _category_ids_for_agent(conn: sqlite3.Connection, agent_id: int) -> list[int
 
 def _sync_agent_categories(conn: sqlite3.Connection, agent_id: int, category_ids: list[int]) -> None:
     conn.execute("DELETE FROM agent_category_members WHERE agent_id = ?", (agent_id,))
-    for category_id in category_ids:
+    # Dedupe (preserving order) instead of using INSERT OR IGNORE: OR IGNORE would also
+    # suppress the FK violation for a genuinely invalid category_id, which we need to
+    # surface as an IntegrityError (see the 400 handling in create/update_agent below).
+    for category_id in dict.fromkeys(category_ids):
         conn.execute(
             "INSERT INTO agent_category_members (category_id, agent_id) VALUES (?, ?)",
             (category_id, agent_id),
