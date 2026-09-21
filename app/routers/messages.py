@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.db import get_connection
-from app.mentions import extract_mentions
+from app.mentions import extract_mentions, resolve_mentions
 from app.tts import is_available as tts_is_available
 from app.tts import purge_stale_cache, synthesize_wav
 
@@ -111,10 +111,6 @@ def enqueue_mentions(
     if conversation["stopped_at"] is not None:
         return
 
-    names = extract_mentions(content)
-    if not names:
-        return
-
     member_rows = conn.execute(
         """
         SELECT agents.id, lower(agents.name) AS name FROM agents
@@ -125,6 +121,13 @@ def enqueue_mentions(
         (conversation["group_id"],),
     ).fetchall()
     agent_ids_by_name = {row["name"]: row["id"] for row in member_rows}
+
+    # resolve_mentions (not extract_mentions) so a multi-word agent name like "Osvaldo
+    # Tibúrcio" is matched whole against agent_ids_by_name's full names below, instead of
+    # being truncated to just "osvaldo" and failing to match anything.
+    names = resolve_mentions(content, list(agent_ids_by_name.keys()))
+    if not names:
+        return
 
     # Preserve the text order. At @all, expand to every member in a stable order; an
     # explicit mention of a member already expanded by @all must not create a duplicate job.
