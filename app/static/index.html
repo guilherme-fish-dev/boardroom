@@ -115,6 +115,14 @@
       </div>
       <div id="view-agents" class="view hidden">
         <h2>Agentes</h2>
+        <div id="agent-categories-panel">
+          <div class="context-block-title">Categorias</div>
+          <div id="agent-category-list"></div>
+          <form id="agent-category-form">
+            <input id="agent-category-name" placeholder="Nova categoria" required />
+            <button type="submit" class="btn-secondary">Criar categoria</button>
+          </form>
+        </div>
         <ul id="agent-list"></ul>
         <form id="agent-form">
           <label>Nome (sem espaços)
@@ -134,6 +142,9 @@
             <select id="agent-model" required></select>
           </label>
           <label class="checkbox-label"><input id="agent-vision" type="checkbox" /> Capaz de visão</label>
+          <label>Categorias
+            <div id="agent-category-checkboxes"></div>
+          </label>
           <div class="agent-form-actions">
             <button type="submit" class="btn-primary" id="agent-submit-btn">Salvar agente</button>
             <button type="button" id="cancel-edit-agent-btn" class="btn-secondary hidden">Cancelar edição</button>

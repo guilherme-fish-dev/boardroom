@@ -5,6 +5,7 @@ const state = {
   activeConversationId: null,
   activeView: "channel",
   agents: [],
+  agentCategories: [],
   members: [],
   lastMessageId: 0,
   pollTimer: null,
@@ -720,6 +721,80 @@ function startPolling() {
   }, 2000);
 }
 
+function currentlyCheckedCategoryIds() {
+  return Array.from(
+    document.querySelectorAll("#agent-category-checkboxes input[type=checkbox]:checked")
+  ).map((cb) => Number(cb.value));
+}
+
+function renderAgentCategoryCheckboxes(selectedIds = []) {
+  const container = document.getElementById("agent-category-checkboxes");
+  container.innerHTML = "";
+  if (state.agentCategories.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-hint";
+    empty.textContent = "Nenhuma categoria criada ainda.";
+    container.appendChild(empty);
+    return;
+  }
+  for (const category of state.agentCategories) {
+    const label = document.createElement("label");
+    label.className = "checkbox-label";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = category.id;
+    checkbox.checked = selectedIds.includes(category.id);
+    label.appendChild(checkbox);
+    label.append(` ${category.name}`);
+    container.appendChild(label);
+  }
+}
+
+function renderAgentCategoryList() {
+  const container = document.getElementById("agent-category-list");
+  container.innerHTML = "";
+  if (state.agentCategories.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-hint";
+    empty.textContent = "Nenhuma categoria ainda.";
+    container.appendChild(empty);
+    return;
+  }
+  for (const category of state.agentCategories) {
+    const chip = document.createElement("span");
+    chip.className = "category-chip";
+    const label = document.createElement("span");
+    label.textContent = category.name;
+    chip.appendChild(label);
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.textContent = "×";
+    removeBtn.setAttribute("aria-label", `Apagar categoria ${category.name}`);
+    removeBtn.onclick = async () => {
+      if (
+        category.agent_count > 0 &&
+        !confirm(`Esta categoria tem ${category.agent_count} agente(s). Apagar mesmo assim?`)
+      ) {
+        return;
+      }
+      const previouslyChecked = currentlyCheckedCategoryIds();
+      await api(`/api/agent-categories/${category.id}`, { method: "DELETE" });
+      state.agentCategories = await api("/api/agent-categories");
+      renderAgentCategoryList();
+      renderAgentCategoryCheckboxes(previouslyChecked.filter((id) => id !== category.id));
+      await loadAgents();
+    };
+    chip.appendChild(removeBtn);
+    container.appendChild(chip);
+  }
+}
+
+async function loadAgentCategories() {
+  state.agentCategories = await api("/api/agent-categories");
+  renderAgentCategoryList();
+  renderAgentCategoryCheckboxes([]);
+}
+
 async function loadAgents() {
   state.agents = await api("/api/agents");
   const list = document.getElementById("agent-list");
@@ -753,6 +828,7 @@ function startEditingAgent(agent) {
   document.getElementById("agent-persona").value = agent.persona_prompt;
   document.getElementById("agent-vision").checked = agent.vision_capable;
   loadModels(agent.model_name);
+  renderAgentCategoryCheckboxes(agent.category_ids || []);
   state.editingAgentId = agent.id;
   document.getElementById("agent-submit-btn").textContent = "Atualizar agente";
   document.getElementById("cancel-edit-agent-btn").classList.remove("hidden");
@@ -765,6 +841,7 @@ function stopEditingAgent() {
   document.getElementById("agent-submit-btn").textContent = "Salvar agente";
   document.getElementById("cancel-edit-agent-btn").classList.add("hidden");
   document.getElementById("delete-agent-btn").classList.add("hidden");
+  renderAgentCategoryCheckboxes([]);
   loadModels();
 }
 
@@ -885,6 +962,7 @@ document.getElementById("nav-agents").onclick = async () => {
   showView("agents");
   await loadAgents();
   await loadModels();
+  await loadAgentCategories();
 };
 
 document.getElementById("nav-settings").onclick = async () => {
@@ -931,6 +1009,7 @@ document.getElementById("agent-form").onsubmit = async (e) => {
     subtitle: document.getElementById("agent-subtitle").value,
     model_name: document.getElementById("agent-model").value,
     vision_capable: document.getElementById("agent-vision").checked,
+    category_ids: currentlyCheckedCategoryIds(),
   };
   if (state.editingAgentId) {
     await api(`/api/agents/${state.editingAgentId}`, {
@@ -945,6 +1024,22 @@ document.getElementById("agent-form").onsubmit = async (e) => {
   }
   stopEditingAgent();
   await loadAgents();
+};
+
+document.getElementById("agent-category-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("agent-category-name");
+  const name = input.value.trim();
+  if (!name) return;
+  const previouslyChecked = currentlyCheckedCategoryIds();
+  await api("/api/agent-categories", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  input.value = "";
+  state.agentCategories = await api("/api/agent-categories");
+  renderAgentCategoryList();
+  renderAgentCategoryCheckboxes(previouslyChecked);
 };
 
 document.getElementById("cancel-edit-agent-btn").onclick = () => {
